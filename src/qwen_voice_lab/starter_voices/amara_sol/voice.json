@@ -1,0 +1,16 @@
+{
+  "schema_version": "qwen-voice-lab-starter-voice-v1",
+  "id": "voice_amara_sol",
+  "name": "Amara Sol",
+  "description": "Original synthetic bilingual starter voice created with Qwen3-TTS VoiceDesign.",
+  "kind": "designed",
+  "language_hint": "multilingual",
+  "reference_file": "reference.wav",
+  "reference_text": "Respirá con tranquilidad y escuchá el sonido. No hay apuro. Mirá qué aparece en ese espacio y contame qué sucede cuando te sentís listo para continuar.",
+  "reference_sha256": "60a5788e3bd9f23a6ff10a684dc4b0c9d618eb9ea00163e6e7158954f915ea38",
+  "design_instruction": "An original adult voice in natural Rioplatense Spanish with a soft luminous timbre. Calm, spacious and precise, medium pitch, subtle warmth, slow pacing without lethargy, never childlike, ethereal, mystical, breathy, or emotionally manipulative.",
+  "tags": ["starter", "synthetic", "voice-design", "multilingual"],
+  "asset_license": "CC0-1.0",
+  "generator": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "generator_license": "Apache-2.0"
+}

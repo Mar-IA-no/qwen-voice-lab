@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500" role="img" aria-labelledby="title desc">
+  <title id="title">Qwen Voice Lab</title>
+  <desc id="desc">Local-first voice design, cloning, scored synthesis and comparison.</desc>
+  <defs>
+    <radialGradient id="glow" cx="78%" cy="45%" r="58%">
+      <stop offset="0" stop-color="#e0b96a" stop-opacity=".24"/>
+      <stop offset=".46" stop-color="#e0b96a" stop-opacity=".055"/>
+      <stop offset="1" stop-color="#090b0e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3d28b"/>
+      <stop offset="1" stop-color="#c4933e"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171c22"/>
+      <stop offset="1" stop-color="#0f1318"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".025"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="500" rx="28" fill="#090b0e"/>
+  <rect width="1600" height="500" rx="28" fill="url(#grid)"/>
+  <rect width="1600" height="500" rx="28" fill="url(#glow)"/>
+  <path d="M0 76H1600M0 424H1600" stroke="#e0b96a" stroke-opacity=".12"/>
+
+  <g transform="translate(112 104)">
+    <g transform="translate(0 8)">
+      <rect width="72" height="72" rx="20" fill="#2a2418" stroke="#e0b96a" stroke-opacity=".7"/>
+      <g fill="url(#gold)" transform="translate(17 16)">
+        <rect x="0" y="14" width="4" height="12" rx="2"/>
+        <rect x="7" y="8" width="4" height="24" rx="2"/>
+        <rect x="14" y="2" width="4" height="36" rx="2"/>
+        <rect x="21" y="10" width="4" height="20" rx="2"/>
+        <rect x="28" y="5" width="4" height="30" rx="2"/>
+        <rect x="35" y="14" width="4" height="12" rx="2"/>
+      </g>
+    </g>
+    <text x="96" y="31" fill="#f3d28b" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="18" font-weight="700" letter-spacing="6">LOCAL VOICE INSTRUMENT</text>
+    <text x="0" y="154" fill="#f2f3f5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="76" font-weight="750" letter-spacing="-3">Qwen Voice Lab</text>
+    <text x="2" y="207" fill="#aeb6c1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="27">Design · clone · score · compare · render locally</text>
+    <g transform="translate(0 255)" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="650" letter-spacing="2">
+      <g><rect width="148" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="74" y="26" fill="#e7e9ec" text-anchor="middle">ES + EN</text></g>
+      <g transform="translate(162 0)"><rect width="174" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="87" y="26" fill="#e7e9ec" text-anchor="middle">LOCAL-FIRST</text></g>
+      <g transform="translate(350 0)"><rect width="218" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="109" y="26" fill="#68d5a1" text-anchor="middle">NO PAID APIS</text></g>
+    </g>
+  </g>
+
+  <g transform="translate(1035 66)" filter="url(#shadow)">
+    <rect width="410" height="368" rx="30" fill="url(#panel)" stroke="#39424e"/>
+    <circle cx="205" cy="184" r="128" fill="none" stroke="#e0b96a" stroke-opacity=".18"/>
+    <circle cx="205" cy="184" r="92" fill="none" stroke="#e0b96a" stroke-opacity=".26"/>
+    <circle cx="205" cy="184" r="57" fill="#e0b96a" fill-opacity=".08" stroke="#e0b96a" stroke-opacity=".42"/>
+    <g fill="url(#gold)" transform="translate(139 132)">
+      <rect x="0" y="39" width="8" height="26" rx="4"/>
+      <rect x="15" y="26" width="8" height="52" rx="4"/>
+      <rect x="30" y="12" width="8" height="80" rx="4"/>
+      <rect x="45" y="30" width="8" height="44" rx="4"/>
+      <rect x="60" y="0" width="8" height="104" rx="4"/>
+      <rect x="75" y="22" width="8" height="60" rx="4"/>
+      <rect x="90" y="9" width="8" height="86" rx="4"/>
+      <rect x="105" y="29" width="8" height="46" rx="4"/>
+      <rect x="120" y="39" width="8" height="26" rx="4"/>
+    </g>
+    <g transform="translate(52 316)" font-family="ui-monospace,SFMono-Regular,Consolas,monospace" font-size="14">
+      <circle cx="8" cy="-4" r="5" fill="#68d5a1"/>
+      <text x="24" y="0" fill="#98a2ae">VOICE → SCORE → WAV + METRICS</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,9 @@
+# Solo derivados regenerables. Voces, renders y configuración local sí se respaldan.
+/.venv/
+/frontend/node_modules/
+/frontend/dist/
+/data/tmp/
+/data/cache/
+/models/
+/.pytest_cache/
+/.ruff_cache/

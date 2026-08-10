@@ -1,0 +1,26 @@
+[Unit]
+Description=Qwen Voice Lab CPU web and API service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qwen-voice-lab
+Group=qwen-voice-lab
+WorkingDirectory=/opt/qwen-voice-lab
+EnvironmentFile=/opt/qwen-voice-lab/.env
+ExecStart=/opt/qwen-voice-lab/.venv/bin/qwen-voice-lab
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/qwen-voice-lab/data
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

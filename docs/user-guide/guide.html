@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen Voice Lab · Manual de uso</title>
+  <style>
+    :root {
+      --ink: #eef0f3;
+      --muted: #9da6b2;
+      --paper: #090b0e;
+      --surface: #11151a;
+      --surface-2: #171c22;
+      --line: #2a323c;
+      --gold: #e0b96a;
+      --gold-hi: #f3d28b;
+      --green: #68d5a1;
+      --blue: #79aefc;
+      --danger: #f07d78;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #050608; color: var(--ink); font-family: Inter, "IBM Plex Sans", "Segoe UI", Arial, sans-serif; }
+    @page { size: A4 landscape; margin: 0; }
+    .page {
+      width: 297mm;
+      height: 210mm;
+      position: relative;
+      overflow: hidden;
+      page-break-after: always;
+      background:
+        radial-gradient(circle at 88% 10%, rgba(224,185,106,.10), transparent 28%),
+        radial-gradient(circle at 8% 88%, rgba(104,213,161,.055), transparent 26%),
+        var(--paper);
+      padding: 14mm 17mm 12mm;
+    }
+    .page:last-child { page-break-after: auto; }
+    .page::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px); background-size: 9mm 9mm; }
+    .page > * { position: relative; z-index: 1; }
+    .running { position: absolute; left: 17mm; right: 17mm; bottom: 6mm; display: flex; justify-content: space-between; align-items: center; color: #737d89; font-size: 7.5pt; letter-spacing: .08em; text-transform: uppercase; }
+    .running b { color: var(--gold); font-weight: 650; }
+    .eyebrow { margin: 0 0 2.3mm; color: var(--gold); font-size: 8pt; font-weight: 750; letter-spacing: .22em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 5mm; font-size: 33pt; line-height: 1.03; letter-spacing: -.04em; }
+    h2 { margin-bottom: 3mm; font-size: 23pt; line-height: 1.08; letter-spacing: -.025em; }
+    h3 { margin-bottom: 1.5mm; font-size: 11.5pt; line-height: 1.2; }
+    p, li { font-size: 10pt; line-height: 1.45; color: #c2c8d0; }
+    .lead { max-width: 190mm; color: #cbd1d8; font-size: 12pt; line-height: 1.5; }
+    .gold { color: var(--gold-hi); }
+    .green { color: var(--green); }
+    .muted { color: var(--muted); }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; margin-bottom: 7mm; }
+    .chapter { width: 12mm; height: 12mm; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(224,185,106,.55); border-radius: 3.5mm; color: var(--gold-hi); background: rgba(224,185,106,.08); font: 700 11pt/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .brand { display: flex; align-items: center; gap: 3mm; }
+    .brand-mark { width: 15mm; height: 15mm; border: 1px solid rgba(224,185,106,.5); border-radius: 4mm; background: linear-gradient(145deg, rgba(224,185,106,.22), rgba(224,185,106,.04)); display: flex; align-items: center; justify-content: center; color: var(--gold-hi); }
+    .wave { display: flex; align-items: center; gap: 1.1mm; height: 8mm; }
+    .wave i { display: block; width: 1.1mm; border-radius: 1mm; background: currentColor; }
+    .wave i:nth-child(1), .wave i:nth-child(7) { height: 3mm; }
+    .wave i:nth-child(2), .wave i:nth-child(6) { height: 6mm; }
+    .wave i:nth-child(3), .wave i:nth-child(5) { height: 8mm; }
+    .wave i:nth-child(4) { height: 4.5mm; }
+    .brand-copy strong { display: block; font-size: 15pt; line-height: 1; }
+    .brand-copy span { display: block; margin-top: 1mm; color: var(--muted); font-size: 8pt; }
+    .cover { padding: 18mm 20mm; }
+    .cover-grid { height: 100%; display: grid; grid-template-columns: 1.08fr .92fr; gap: 16mm; align-items: center; }
+    .cover h1 { max-width: 125mm; margin-top: 20mm; font-size: 43pt; }
+    .cover .lead { max-width: 120mm; }
+    .hero-orb { width: 92mm; height: 92mm; margin: auto; position: relative; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(224,185,106,.32); background: radial-gradient(circle, rgba(224,185,106,.18), rgba(224,185,106,.03) 47%, transparent 68%); box-shadow: 0 0 70mm rgba(224,185,106,.09); }
+    .hero-orb::before, .hero-orb::after { content: ""; position: absolute; border-radius: 50%; border: 1px solid rgba(224,185,106,.18); }
+    .hero-orb::before { inset: 12mm; }
+    .hero-orb::after { inset: 24mm; }
+    .hero-orb .wave { height: 30mm; gap: 2.2mm; color: var(--gold-hi); }
+    .hero-orb .wave i { width: 2mm; box-shadow: 0 0 7mm rgba(243,210,139,.35); }
+    .hero-orb .wave i:nth-child(1), .hero-orb .wave i:nth-child(7) { height: 9mm; }
+    .hero-orb .wave i:nth-child(2), .hero-orb .wave i:nth-child(6) { height: 19mm; }
+    .hero-orb .wave i:nth-child(3), .hero-orb .wave i:nth-child(5) { height: 28mm; }
+    .hero-orb .wave i:nth-child(4) { height: 15mm; }
+    .version { display: inline-flex; gap: 3mm; align-items: center; margin-top: 7mm; padding: 2.5mm 4mm; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 8.5pt; }
+    .version i { width: 2mm; height: 2mm; border-radius: 50%; background: var(--green); box-shadow: 0 0 3mm var(--green); }
+    .cards { display: grid; gap: 4mm; }
+    .cards.three { grid-template-columns: repeat(3, 1fr); }
+    .cards.two { grid-template-columns: repeat(2, 1fr); }
+    .card { min-height: 35mm; padding: 5mm; border: 1px solid var(--line); border-radius: 4mm; background: linear-gradient(145deg, rgba(23,28,34,.96), rgba(14,17,21,.96)); }
+    .card .num { display: inline-grid; width: 8mm; height: 8mm; margin-bottom: 4mm; place-items: center; border-radius: 2.2mm; background: rgba(224,185,106,.12); color: var(--gold-hi); font: 700 8.5pt/1 ui-monospace, monospace; }
+    .card p { margin: 0; font-size: 9pt; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3mm; margin-top: 6mm; }
+    .flow .step { position: relative; min-height: 33mm; padding: 4mm; border: 1px solid var(--line); border-radius: 3.5mm; background: rgba(17,21,26,.88); }
+    .flow .step:not(:last-child)::after { content: "›"; position: absolute; right: -2.7mm; top: 11mm; width: 5mm; height: 5mm; display: grid; place-items: center; border-radius: 50%; background: var(--gold); color: #17130c; font-weight: 900; z-index: 2; }
+    .step b { display: block; color: var(--gold-hi); font-size: 8pt; letter-spacing: .08em; text-transform: uppercase; }
+    .step strong { display: block; margin: 2.5mm 0 1.5mm; font-size: 10.5pt; }
+    .step p { margin: 0; font-size: 8.5pt; line-height: 1.35; }
+    .screen-grid { display: grid; grid-template-columns: 1.66fr .74fr; gap: 6mm; align-items: start; }
+    .screen-grid.reverse { grid-template-columns: .74fr 1.66fr; }
+    .shot { position: relative; padding: 2mm; border: 1px solid #34404c; border-radius: 4mm; background: #050608; box-shadow: 0 5mm 15mm rgba(0,0,0,.35); }
+    .shot img { display: block; width: 100%; max-height: 143mm; object-fit: contain; object-position: top center; border-radius: 2.5mm; }
+    .shot.tall img { max-height: 139mm; }
+    .callout { position: absolute; width: 7mm; height: 7mm; display: grid; place-items: center; border-radius: 50%; border: .6mm solid #0a0b0d; background: var(--gold-hi); color: #11100c; font: 800 8pt/1 ui-monospace, monospace; box-shadow: 0 1mm 3mm rgba(0,0,0,.55); }
+    .notes { display: grid; gap: 3mm; }
+    .note { display: grid; grid-template-columns: 8mm 1fr; gap: 3mm; align-items: start; padding: 3.4mm; border: 1px solid var(--line); border-radius: 3mm; background: rgba(17,21,26,.88); }
+    .note b { width: 7mm; height: 7mm; display: grid; place-items: center; border-radius: 50%; background: rgba(224,185,106,.14); color: var(--gold-hi); font: 750 8pt/1 ui-monospace, monospace; }
+    .note strong { display: block; margin-bottom: .7mm; font-size: 9.5pt; }
+    .note p { margin: 0; font-size: 8.3pt; line-height: 1.35; }
+    .tip { margin-top: 4mm; padding: 3.5mm 4mm; border-left: 1.2mm solid var(--green); border-radius: 0 3mm 3mm 0; background: rgba(104,213,161,.07); color: #c7d9d0; font-size: 8.6pt; line-height: 1.4; }
+    .warn { border-left-color: var(--gold); background: rgba(224,185,106,.07); color: #d7c9aa; }
+    .danger { border-left-color: var(--danger); background: rgba(240,125,120,.07); }
+    .legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2.5mm; margin: 4mm 0 5mm; }
+    .legend div { padding: 3mm; border: 1px solid var(--line); border-radius: 3mm; background: var(--surface); }
+    .legend b { display: block; color: var(--gold-hi); font: 800 11pt/1 ui-monospace, monospace; }
+    .legend span { display: block; margin-top: 1.4mm; color: var(--muted); font-size: 8pt; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3mm; margin-top: 4mm; }
+    .metric { padding: 3.5mm; border: 1px solid var(--line); border-radius: 3mm; background: var(--surface); }
+    .metric strong { display: block; color: var(--gold-hi); font-size: 10pt; }
+    .metric span { display: block; margin-top: 1mm; color: var(--muted); font-size: 8pt; line-height: 1.3; }
+    .state-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2.5mm; margin-top: 5mm; }
+    .state { padding: 3mm; border: 1px solid var(--line); border-radius: 3mm; background: var(--surface); }
+    .state b { display: flex; align-items: center; gap: 2mm; font-size: 8.5pt; }
+    .state b::before { content: ""; width: 2mm; height: 2mm; border-radius: 50%; background: var(--green); }
+    .state:nth-child(5) b::before { background: var(--gold); }
+    .state:nth-child(6) b::before { background: var(--danger); }
+    .state span { display: block; margin-top: 1.5mm; color: var(--muted); font-size: 7.5pt; line-height: 1.3; }
+    .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm 8mm; margin-top: 5mm; }
+    .check { display: grid; grid-template-columns: 7mm 1fr; gap: 3mm; align-items: start; }
+    .check i { width: 5mm; height: 5mm; margin-top: .5mm; border: .6mm solid var(--gold); border-radius: 1.3mm; }
+    .check strong { display: block; font-size: 9.5pt; }
+    .check span { display: block; margin-top: 1mm; color: var(--muted); font-size: 8.2pt; line-height: 1.35; }
+    .faq { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3mm; margin-top: 5mm; }
+    .faq article { padding: 3.5mm 4mm; border: 1px solid var(--line); border-radius: 3mm; background: rgba(17,21,26,.92); }
+    .faq strong { display: block; margin-bottom: 1.3mm; color: var(--gold-hi); font-size: 9.2pt; }
+    .faq p { margin: 0; font-size: 8.1pt; line-height: 1.35; }
+    code { padding: .3mm 1mm; border-radius: 1mm; background: rgba(255,255,255,.06); color: var(--gold-hi); font: 8.2pt ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+
+  <section class="page cover">
+    <div class="cover-grid">
+      <div>
+        <div class="brand">
+          <div class="brand-mark"><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+          <div class="brand-copy"><strong>Qwen</strong><span>VOICE LAB</span></div>
+        </div>
+        <h1>Manual de uso<br><span class="gold">del laboratorio de voces</span></h1>
+        <p class="lead">Diseñá identidades sintéticas, importá referencias autorizadas, componé partituras, compará timbres y descargá locuciones WAV desde una sola interfaz local.</p>
+        <div class="version"><i></i> EDICIÓN MVP · ESPAÑOL · AGOSTO 2026</div>
+      </div>
+      <div class="hero-orb"><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+    </div>
+    <div class="running"><span>Manual humano</span><b>01 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Antes de empezar</p><h2>Un estudio local con seis espacios</h2><p class="lead">La navegación izquierda ordena el ciclo completo: crear o incorporar una voz, producir audio, comparar resultados y recuperar cada trabajo.</p></div><div class="chapter">02</div></div>
+    <div class="cards three">
+      <article class="card"><span class="num">01</span><h3>Estudio</h3><p>Elegí voz e idioma, escribí el texto y generá una locución simple o por bloques.</p></article>
+      <article class="card"><span class="num">02</span><h3>Voces</h3><p>Diseñá identidades originales o importá una referencia con autorización explícita.</p></article>
+      <article class="card"><span class="num">03</span><h3>Archivo</h3><p>Escuchá referencias, pruebas y locuciones conservadas en esta instalación.</p></article>
+      <article class="card"><span class="num">04</span><h3>Comparar</h3><p>Enviá el mismo texto, idioma y seed a entre dos y cinco voces.</p></article>
+      <article class="card"><span class="num">05</span><h3>Actividad</h3><p>Seguí la cola, reproducí resultados anteriores y descargá cada WAV.</p></article>
+      <article class="card"><span class="num">06</span><h3>Sistema</h3><p>Consultá motor, modelos, límites, privacidad y disponibilidad de GPU.</p></article>
+    </div>
+    <div class="flow">
+      <div class="step"><b>Paso 1</b><strong>Elegí una voz</strong><p>Usá una identidad existente o creá una nueva.</p></div>
+      <div class="step"><b>Paso 2</b><strong>Prepará el texto</strong><p>Definí idioma, contenido y seed.</p></div>
+      <div class="step"><b>Paso 3</b><strong>Encolá</strong><p>La cola procesa un trabajo por vez.</p></div>
+      <div class="step"><b>Paso 4</b><strong>Escuchá</strong><p>Validá dicción, ritmo e identidad.</p></div>
+      <div class="step"><b>Paso 5</b><strong>Descargá</strong><p>El resultado queda disponible como WAV.</p></div>
+    </div>
+    <div class="tip warn"><strong>Primero escuchá, después conservá.</strong> Una muestra generada no se vuelve voz reutilizable hasta que la agregás explícitamente al catálogo.</div>
+    <div class="running"><span>Qwen Voice Lab · Manual de uso</span><b>02 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Estudio</p><h2>Generar una locución simple</h2></div><div class="chapter">03</div></div>
+    <div class="screen-grid">
+      <div class="shot">
+        <img src="screenshots/01-studio.png" alt="Estudio de síntesis">
+        <span class="callout" style="left:22%;top:23%">1</span><span class="callout" style="left:48%;top:23%">2</span><span class="callout" style="left:34%;top:49%">3</span><span class="callout" style="left:51%;top:79%">4</span><span class="callout" style="left:82%;top:34%">5</span><span class="callout" style="left:88%;top:50%">6</span>
+      </div>
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Identidad vocal</strong><p>Seleccioná una voz del catálogo local.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Nombre del render</strong><p>Usá un título reconocible: después aparecerá en Actividad.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Texto e idioma</strong><p>Elegí ES o EN y revisá el texto completo antes de enviar.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Seed</strong><p>Conservá la misma seed cuando quieras comparar condiciones.</p></div></div>
+        <div class="note"><b>5</b><div><strong>Monitor</strong><p>Muestra estado, audio, progreso y el resultado más reciente.</p></div></div>
+        <div class="note"><b>6</b><div><strong>Descarga directa</strong><p>Al completar, reproducí o descargá el WAV sin buscar archivos internos.</p></div></div>
+      </div>
+    </div>
+    <div class="tip"><strong>RTF:</strong> tiempo de generación dividido por duración del audio. Un RTF menor que 1 indica síntesis más rápida que tiempo real; comparalo sólo entre corridas equivalentes.</div>
+    <div class="running"><span>Qwen Voice Lab · Estudio</span><b>03 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Partitura</p><h2>Bloques, pausas y función prosódica</h2><p class="lead">“Crear desde párrafos” convierte cada párrafo en un bloque editable. Cada bloque conserva su texto, su función y el silencio que se agrega después.</p></div><div class="chapter">04</div></div>
+    <div class="legend">
+      <div><b>N</b><span>Neutra · referencia principal</span></div><div><b>T</b><span>Tónica · sostén o asentamiento</span></div><div><b>S</b><span>Subdominante · apertura o tránsito</span></div><div><b>D</b><span>Dominante · tensión o impulso</span></div><div><b>R</b><span>Resolución · retorno o cierre</span></div>
+    </div>
+    <div class="screen-grid">
+      <div class="shot tall"><img src="screenshots/02-score.png" alt="Partitura por bloques"><span class="callout" style="left:42%;top:38%">1</span><span class="callout" style="left:67%;top:42%">2</span><span class="callout" style="left:83%;top:42%">3</span><span class="callout" style="left:39%;top:77%">4</span></div>
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Un enunciado por bloque</strong><p>Podés editar texto y orden antes de renderizar.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Función independiente</strong><p>Neutra, T, S, D o R se eligen por bloque.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Pausa posterior</strong><p><code>2400</code> significa 2,4 segundos de silencio después de ese bloque.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Preparación de la voz</strong><p>La interfaz avisa si la identidad no tiene un set T/S/D/R completo.</p></div></div>
+        <div class="tip danger"><strong>Importante:</strong> T/S/D/R no se transfiere entre voces. Si una identidad no tiene sus cuatro referencias validadas, el render funcional se rechaza. Usá Neutra.</div>
+      </div>
+    </div>
+    <div class="running"><span>Qwen Voice Lab · Partitura</span><b>04 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Voces · VoiceDesign</p><h2>Diseñar una identidad original</h2></div><div class="chapter">05</div></div>
+    <div class="screen-grid reverse">
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Nombre y descripción</strong><p>Nombrá la identidad y registrá su uso previsto.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Dirección vocal</strong><p>Describí edad aparente, timbre, ritmo, dicción y límites expresivos.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Texto de referencia</strong><p>Usá una frase suficiente para evaluar pronunciación e identidad.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Generar muestra</strong><p>La muestra entra a la cola y aparece en “Diseños recientes”.</p></div></div>
+        <div class="note"><b>5</b><div><strong>Promoción explícita</strong><p>Escuchá; si funciona, elegí “Agregar a mis voces”.</p></div></div>
+        <div class="tip warn">Variá una condición por vez —dirección, seed o texto— para entender qué produjo el cambio.</div>
+      </div>
+      <div class="shot"><img src="screenshots/03-voice-design.png" alt="Diseño de identidad"><span class="callout" style="left:34%;top:28%">1</span><span class="callout" style="left:42%;top:45%">2</span><span class="callout" style="left:43%;top:64%">3</span><span class="callout" style="left:84%;top:82%">4</span><span class="callout" style="left:77%;top:93%">5</span></div>
+    </div>
+    <div class="running"><span>Qwen Voice Lab · Diseño</span><b>05 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Voces · Clonación</p><h2>Importar una referencia autorizada</h2></div><div class="chapter">06</div></div>
+    <div class="screen-grid">
+      <div class="shot"><img src="screenshots/04-authorized-import.png" alt="Importación autorizada"><span class="callout" style="left:31%;top:30%">1</span><span class="callout" style="left:41%;top:49%">2</span><span class="callout" style="left:43%;top:67%">3</span><span class="callout" style="left:40%;top:84%">4</span></div>
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Identificación</strong><p>Nombre, idioma de referencia y descripción de uso.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Transcripción exacta</strong><p>Escribí lo que realmente se oye; no una versión corregida.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Audio local</strong><p>Admite WAV, FLAC, MP3, M4A, WebM y OGG.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Consentimiento</strong><p>La casilla es obligatoria y registra la confirmación del operador.</p></div></div>
+        <div class="tip danger"><strong>No alcanza con tildar una casilla:</strong> tenés que contar con permiso real para usar esa voz y generar derivados. Si no podés verificarlo, no la importes.</div>
+        <div class="tip">Las referencias, voces y locuciones nuevas quedan en el almacenamiento local y fuera de Git.</div>
+      </div>
+    </div>
+    <div class="running"><span>Qwen Voice Lab · Importación</span><b>06 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Comparar</p><h2>Mismo texto, mismas condiciones</h2></div><div class="chapter">07</div></div>
+    <div class="screen-grid">
+      <div class="shot"><img src="screenshots/05-compare.png" alt="Comparación controlada"><span class="callout" style="left:24%;top:36%">1</span><span class="callout" style="left:25%;top:61%">2</span><span class="callout" style="left:24%;top:84%">3</span><span class="callout" style="left:73%;top:37%">4</span></div>
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Elegí 2–5 voces</strong><p>La selección queda visible antes de encolar.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Texto común</strong><p>Todas reciben exactamente el mismo contenido e idioma.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Seed compartida</strong><p>Mantiene una condición de generación comparable.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Resultados paralelos</strong><p>Cada voz conserva audio, descarga y métricas propias.</p></div></div>
+        <div class="tip warn">Una comparación controlada reduce diferencias, pero no iguala la calidad de cada referencia. Decidí con escucha y métricas; no sólo por velocidad.</div>
+      </div>
+    </div>
+    <div class="metrics"><div class="metric"><strong>Generación</strong><span>Tiempo que tardó el motor.</span></div><div class="metric"><strong>RTF</strong><span>Tiempo de generación / duración.</span></div><div class="metric"><strong>VRAM</strong><span>Pico observado en CUDA.</span></div><div class="metric"><strong>SHA</strong><span>Huella del WAV resultante.</span></div></div>
+    <div class="running"><span>Qwen Voice Lab · Comparación</span><b>07 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Actividad</p><h2>Recuperar, escuchar y descargar</h2><p class="lead">Cambiar de pestaña no borra un trabajo. El monitor muestra el último render y Actividad conserva el historial durable de la instalación.</p></div><div class="chapter">08</div></div>
+    <div class="screen-grid reverse">
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Estado</strong><p>En cola, renderizando, completo, error o cancelado.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Reproductor</strong><p>Escuchá el resultado sin descargarlo primero.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Descargar WAV</strong><p>El botón está junto a cada trabajo completo.</p></div></div>
+        <div class="note"><b>4</b><div><strong>Métricas</strong><p>Duración, generación, RTF y VRAM quedan asociadas al trabajo.</p></div></div>
+        <div class="tip"><strong>¿Dónde quedó mi audio?</strong> Abrí Actividad, localizá el título del render y elegí “Descargar WAV”. También aparece entre las locuciones recientes del Estudio.</div>
+      </div>
+      <div class="shot tall"><img src="screenshots/06-activity.png" alt="Actividad y métricas"><span class="callout" style="left:86%;top:22%">1</span><span class="callout" style="left:51%;top:29%">2</span><span class="callout" style="left:82%;top:29%">3</span><span class="callout" style="left:56%;top:33%">4</span></div>
+    </div>
+    <div class="running"><span>Qwen Voice Lab · Actividad</span><b>08 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Sistema</p><h2>Entender disponibilidad y prioridad GPU</h2></div><div class="chapter">09</div></div>
+    <div class="screen-grid">
+      <div class="shot"><img src="screenshots/07-system.png" alt="Sistema y capacidades"><span class="callout" style="left:32%;top:23%">1</span><span class="callout" style="left:52%;top:29%">2</span><span class="callout" style="left:74%;top:44%">3</span><span class="callout" style="left:75%;top:76%">4</span></div>
+      <div class="notes">
+        <div class="note"><b>1</b><div><strong>Motor y modelos</strong><p>Confirma si la instancia usa mock o Qwen y qué modelos declara.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Estado GPU</strong><p>En instalaciones compartidas, Qwen se carga bajo demanda mediante el wrapper.</p></div></div>
+        <div class="note"><b>3</b><div><strong>Contrato local</strong><p>Sin telemetría ni proveedores pagos; activos nuevos fuera de Git.</p></div></div>
+        <div class="note"><b>4</b><div><strong>OpenAPI</strong><p>La misma API de la interfaz puede automatizarse.</p></div></div>
+      </div>
+    </div>
+    <div class="state-row">
+      <div class="state"><b>standby</b><span>Qwen se cargará con el primer trabajo.</span></div><div class="state"><b>starting</b><span>El wrapper está solicitando la GPU.</span></div><div class="state"><b>ready</b><span>Worker admitido y disponible.</span></div><div class="state"><b>running</b><span>Hay un render activo.</span></div><div class="state"><b>cooldown</b><span>Prioridad superior; esperar antes de reintentar.</span></div><div class="state"><b>unavailable</b><span>Consultar al operador; no saltar el wrapper.</span></div>
+    </div>
+    <div class="tip warn">Una preempción puede fallar el render activo, pero no debería bajar la interfaz ni borrar resultados completos. No reenvíes en bucle: esperá el estado disponible y hacé un nuevo pedido explícito.</div>
+    <div class="running"><span>Qwen Voice Lab · Sistema</span><b>09 / 10</b></div>
+  </section>
+
+  <section class="page">
+    <div class="header"><div><p class="eyebrow">Salida rápida</p><h2>Checklist y resolución de problemas</h2></div><div class="chapter">10</div></div>
+    <div class="check-grid">
+      <div class="check"><i></i><div><strong>La voz correcta está seleccionada</strong><span>Revisá nombre, tipo e idioma antes de generar.</span></div></div>
+      <div class="check"><i></i><div><strong>El texto final está validado</strong><span>La síntesis ocurre sobre el texto completo enviado.</span></div></div>
+      <div class="check"><i></i><div><strong>Las pausas están en milisegundos</strong><span>1000 ms = 1 segundo y se agregan después del bloque.</span></div></div>
+      <div class="check"><i></i><div><strong>T/S/D/R está disponible para esa voz</strong><span>Si no hay perfil completo, elegir Neutra.</span></div></div>
+      <div class="check"><i></i><div><strong>La comparación usa la misma seed</strong><span>Mismo texto, idioma y seed para todas las voces.</span></div></div>
+      <div class="check"><i></i><div><strong>El WAV fue escuchado y descargado</strong><span>Actividad conserva el acceso aunque cambies de pestaña.</span></div></div>
+    </div>
+    <div class="faq">
+      <article><strong>“El trabajo está esperando GPU”</strong><p>La cola es serial o el modelo se está cargando. Observá el monitor; no dupliques el pedido.</p></article>
+      <article><strong>“Prioridad producción / cooldown”</strong><p>Un servicio prioritario desplazó el worker. Esperá y generá otra vez cuando el sistema vuelva a estar disponible.</p></article>
+      <article><strong>“La voz no tiene T/S/D/R”</strong><p>No es un error del texto. Esa identidad no tiene un perfil completo: usá Neutra o prepará y validá las cuatro variantes.</p></article>
+      <article><strong>“Cambié de pestaña y no veo el render”</strong><p>Abrí Actividad o Locuciones recientes. Cada trabajo completo ofrece reproducción y descarga WAV.</p></article>
+      <article><strong>“Una muestra de diseño me gustó”</strong><p>En Voces → Diseños recientes, elegí “Agregar a mis voces”. Recién entonces aparece en Estudio y Comparar.</p></article>
+      <article><strong>“La comparación suena distinta”</strong><p>Eso es lo que se evalúa. Verificá condiciones comunes y decidí mediante escucha; las métricas no reemplazan el criterio perceptual.</p></article>
+    </div>
+    <div class="tip danger"><strong>Privacidad y derechos:</strong> no compartas referencias ni locuciones sin autorización. La red privada o el acceso local no convierten automáticamente un audio en material redistribuible.</div>
+    <div class="tip"><strong>Para agentes:</strong> el contrato automatizable, payloads, estados y política de reintento están en <code>docs/AGENT_USAGE_GUIDE.md</code>.</div>
+    <div class="running"><span>Qwen Voice Lab · Manual de uso</span><b>10 / 10</b></div>
+  </section>
+
+</body>
+</html>
