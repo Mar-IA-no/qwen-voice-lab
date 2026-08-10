@@ -11,7 +11,7 @@ The continuous-integration workflow runs:
 - a reproducibility check against the packaged frontend;
 - Python wheel and source-distribution builds.
 
-Coverage includes consent enforcement, remote authentication, path privacy, archive resolution, scored pauses, per-function reference selection, rejection of unsupported prosody, VoiceDesign promotion idempotence, controlled comparisons, download semantics, GPU admission verification, retryable scheduler exits, restricted metadata cleanup and the absence of paid voice providers. A scheduler fixture also verifies lazy worker admission, reuse within one window, preemption isolation, API survival and launch cooldown without requiring CUDA.
+Coverage includes consent enforcement, remote authentication, path privacy, archive resolution, scored pauses, per-function reference selection, rejection of unsupported prosody, VoiceDesign promotion idempotence, controlled comparisons, download semantics, direct-GPU defaults, optional GPU admission verification, multi-argument controller prefixes, retryable controller exits, restricted metadata cleanup and the absence of paid voice providers. A controller fixture also verifies lazy worker admission, reuse within one window, preemption isolation, API survival and launch cooldown without requiring CUDA.
 
 An explicit root-only integration suite uses real `systemd-run` scopes with a fake non-CUDA worker. It proves that cancellation and FastAPI shutdown leave the admitted transient unit inactive. This test is opt-in through `QVL_RUN_SYSTEMD_TESTS=1` and is not run in ordinary CI.
 

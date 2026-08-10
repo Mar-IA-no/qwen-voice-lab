@@ -270,18 +270,18 @@
   </section>
 
   <section class="page">
-    <div class="header"><div><p class="eyebrow">Sistema</p><h2>Entender disponibilidad y prioridad GPU</h2></div><div class="chapter">09</div></div>
+    <div class="header"><div><p class="eyebrow">Sistema</p><h2>Entender disponibilidad y ejecución GPU</h2></div><div class="chapter">09</div></div>
     <div class="screen-grid">
       <div class="shot"><img src="screenshots/07-system.png" alt="Sistema y capacidades"><span class="callout" style="left:32%;top:23%">1</span><span class="callout" style="left:52%;top:29%">2</span><span class="callout" style="left:74%;top:44%">3</span><span class="callout" style="left:75%;top:76%">4</span></div>
       <div class="notes">
         <div class="note"><b>1</b><div><strong>Motor y modelos</strong><p>Confirma si la instancia usa mock o Qwen y qué modelos declara.</p></div></div>
-        <div class="note"><b>2</b><div><strong>Estado GPU</strong><p>En instalaciones compartidas, Qwen se carga bajo demanda mediante el wrapper.</p></div></div>
+        <div class="note"><b>2</b><div><strong>Estado GPU</strong><p>En una máquina dedicada, Qwen usa la GPU directamente. Un host compartido puede activar un controlador opcional.</p></div></div>
         <div class="note"><b>3</b><div><strong>Contrato local</strong><p>Sin telemetría ni proveedores pagos; activos nuevos fuera de Git.</p></div></div>
         <div class="note"><b>4</b><div><strong>OpenAPI</strong><p>La misma API de la interfaz puede automatizarse.</p></div></div>
       </div>
     </div>
-    <div class="state-row">
-      <div class="state"><b>standby</b><span>Qwen se cargará con el primer trabajo.</span></div><div class="state"><b>starting</b><span>El wrapper está solicitando la GPU.</span></div><div class="state"><b>ready</b><span>Worker admitido y disponible.</span></div><div class="state"><b>running</b><span>Hay un render activo.</span></div><div class="state"><b>cooldown</b><span>Prioridad superior; esperar antes de reintentar.</span></div><div class="state"><b>unavailable</b><span>Consultar al operador; no saltar el wrapper.</span></div>
+    <p class="lead">Estados del worker únicamente cuando la instalación activó coordinación externa:</p><div class="state-row">
+      <div class="state"><b>standby</b><span>Qwen se cargará con el primer trabajo.</span></div><div class="state"><b>starting</b><span>El controlador está solicitando la GPU.</span></div><div class="state"><b>ready</b><span>Worker admitido y disponible.</span></div><div class="state"><b>running</b><span>Hay un render activo.</span></div><div class="state"><b>cooldown</b><span>Prioridad superior; esperar antes de reintentar.</span></div><div class="state"><b>unavailable</b><span>Consultar al operador; no eludir el controlador.</span></div>
     </div>
     <div class="tip warn">Una preempción puede fallar el render activo, pero no debería bajar la interfaz ni borrar resultados completos. No reenvíes en bucle: esperá el estado disponible y hacé un nuevo pedido explícito.</div>
     <div class="running"><span>Qwen Voice Lab · Sistema</span><b>09 / 10</b></div>
@@ -299,7 +299,7 @@
     </div>
     <div class="faq">
       <article><strong>“El trabajo está esperando GPU”</strong><p>La cola es serial o el modelo se está cargando. Observá el monitor; no dupliques el pedido.</p></article>
-      <article><strong>“Prioridad producción / cooldown”</strong><p>Un servicio prioritario desplazó el worker. Esperá y generá otra vez cuando el sistema vuelva a estar disponible.</p></article>
+      <article><strong>“Prioridad externa / cooldown”</strong><p>En un host compartido, una carga prioritaria desplazó el worker. Esperá y generá otra vez cuando el sistema vuelva a estar disponible.</p></article>
       <article><strong>“La voz no tiene T/S/D/R”</strong><p>No es un error del texto. Esa identidad no tiene un perfil completo: usá Neutra o prepará y validá las cuatro variantes.</p></article>
       <article><strong>“Cambié de pestaña y no veo el render”</strong><p>Abrí Actividad o Locuciones recientes. Cada trabajo completo ofrece reproducción y descarga WAV.</p></article>
       <article><strong>“Una muestra de diseño me gustó”</strong><p>En Voces → Diseños recientes, elegí “Agregar a mis voces”. Recién entonces aparece en Estudio y Comparar.</p></article>

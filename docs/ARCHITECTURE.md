@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Qwen Voice Lab owns voice identity creation, authorized reference import, local synthesis, score timing, controlled comparison, job history, and render metrics. It does not own conversational orchestration, participant recording, session persistence, production GPU scheduling, or paid speech providers.
+Qwen Voice Lab owns voice identity creation, authorized reference import, local synthesis, score timing, controlled comparison, job history, and render metrics. It does not own conversational orchestration, participant recording, session persistence, general-purpose GPU scheduling, or paid speech providers.
 
 ## Runtime flow
 
@@ -13,11 +13,9 @@ browser ── installation token → HttpOnly session
        ├─ owner-only local audio store
        └─ serial job queue
             ├─ mock diagnostic engine
-            ├─ direct Qwen engine (dedicated GPU)
-            └─ wrapped-worker proxy (shared GPU)
-                 └─ priority wrapper → reusable Qwen worker
-                      ├─ 1.7B Base: clone synthesis
-                      └─ 1.7B VoiceDesign: original identity sample
+            └─ direct Qwen engine (dedicated GPU; default)
+                 ├─ 1.7B Base: clone synthesis
+                 └─ 1.7B VoiceDesign: original identity sample
 ```
 
 The queue is the only route to generation. A job transitions through `queued → running → complete`, with `failed` and `cancelled` as terminal alternatives. Startup marks interrupted `queued` or `running` records as failed rather than replaying private work automatically.
@@ -26,9 +24,11 @@ The queue is the only route to generation. A job transitions through `queued →
 
 The Qwen engine loads on the first job. Clone and VoiceDesign models never remain resident together: switching job kind unloads the current model, clears prompt tensors, runs garbage collection, empties the CUDA allocator, and then loads the other model.
 
-On a dedicated GPU, the Qwen engine remains in the API process and an idle sweep unloads it after the configured interval. On shared infrastructure, `QVL_REQUIRE_GPU_WRAPPER=true` keeps FastAPI, the UI, SQLite and the serial queue outside CUDA. The first render starts a separate worker through `QVL_GPU_WRAPPER`; that worker independently requires both `QVL_GPU_WRAPPED=1` and a Linux cgroup matching `QVL_GPU_CGROUP_PATTERN` before it can load Qwen. It stays admitted and reuses the active model until `QVL_MODEL_IDLE_SECONDS` elapses, then exits and releases its scope.
+On a dedicated GPU—the default—the Qwen engine remains in the API process and an idle sweep unloads it after the configured interval. No external admission controller is required.
 
-Production preemption terminates only the worker. The current job becomes `failed` with an explicit diagnostic, the API remains reachable, and a cooldown prevents queued comparison jobs from relaunching the scheduler in a tight loop. A later explicit job requests a new worker automatically. Interrupted private jobs are never replayed automatically. Cancellation and API shutdown stop the exact admitted transient unit; passive metadata cleanup targets only units matching the configured name, cgroup pattern, repository path and worker module.
+An optional shared-host adapter can set `QVL_REQUIRE_GPU_WRAPPER=true`. FastAPI, the UI, SQLite and the serial queue then remain outside CUDA. The first render starts a separate worker through the argument-vector prefix in `QVL_GPU_WRAPPER`; that worker independently requires both `QVL_GPU_WRAPPED=1` and a Linux cgroup matching `QVL_GPU_CGROUP_PATTERN` before it can load Qwen. It stays admitted and reuses the active model until `QVL_MODEL_IDLE_SECONDS` elapses, then exits and releases its scope. [`gpu-priorityd`](https://github.com/Mar-IA-no/gpu-priorityd) is a compatible public controller, not a mandatory dependency.
+
+In that optional mode, higher-priority preemption terminates only the worker. The current job becomes `failed` with an explicit diagnostic, the API remains reachable, and a cooldown prevents queued comparison jobs from relaunching the controller in a tight loop. A later explicit job requests a new worker automatically. Interrupted private jobs are never replayed automatically. Cancellation and API shutdown stop the exact admitted transient unit; passive cleanup targets only registered units matching the configured application job name.
 
 ## Identity lifecycle
 

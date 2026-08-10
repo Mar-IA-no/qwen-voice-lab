@@ -13,7 +13,7 @@ Qwen Voice Lab is a local instrument. Its default network binding is `127.0.0.1`
 
 ## GPU boundary
 
-Shared deployments can require a configured launcher marker and Linux cgroup pattern before Qwen initializes. The CPU API may run as an unprivileged service account while narrowly validated helpers admit and stop only the configured worker identity. Cancellation and API shutdown stop the exact transient unit before terminating its controller. Dedicated machines may disable this optional admission layer. The mock engine remains available for CPU-only development.
+Dedicated machines run Qwen directly and do not need an external scheduler. Shared deployments may opt into a configured launcher marker and Linux cgroup pattern before Qwen initializes. The CPU API may run as an unprivileged service account while narrowly validated commands admit and stop only the configured worker identity. Cancellation and API shutdown stop the exact transient unit before terminating its controller. [`gpu-priorityd`](https://github.com/Mar-IA-no/gpu-priorityd) is one compatible public controller. The mock engine remains available for CPU-only development.
 
 ## Deployment notes
 

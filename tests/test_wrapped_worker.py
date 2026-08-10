@@ -34,7 +34,7 @@ def build_client(tmp_path: Path, monkeypatch, mode: str = "success") -> tuple[Te
         host="127.0.0.1",
         access_token="",
         require_gpu_wrapper=True,
-        gpu_wrapper=str(runtime),
+        gpu_wrapper=f"{sys.executable} {runtime}",
         gpu_cgroup_pattern=r"(fake-gpu-worker[.]service)",
         gpu_unit_prefix="",
         gpu_worker_command=f"{sys.executable} {runtime} worker",
@@ -83,6 +83,17 @@ def test_wrapped_worker_is_lazy_and_reused_while_api_stays_resident(
         assert client.get("/api/health").status_code == 200
 
 
+def test_wrapper_accepts_a_multi_argument_command_prefix(tmp_path: Path, monkeypatch) -> None:
+    client, _ = build_client(tmp_path, monkeypatch)
+    engine = client.app.state.manager.engine
+
+    command = engine._wrapper_command()
+
+    runtime = str(Path(__file__).parent / "fixtures" / "fake_gpu_runtime.py")
+    assert command[:2] == [sys.executable, runtime]
+    assert command[2:5] == ["--name", "qwen-voice-lab", "--"]
+
+
 def test_preemption_fails_job_but_preserves_api_and_applies_cooldown(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -90,7 +101,7 @@ def test_preemption_fails_job_but_preserves_api_and_applies_cooldown(
     with client:
         first = submit(client, "Preempted")
         assert first["status"] == "failed"
-        assert "preempted by the priority service" in first["error"]
+        assert "preempted by the external controller" in first["error"]
 
         status = client.get("/api/capabilities").json()
         assert status["engine_ready"] is False
@@ -115,7 +126,7 @@ def test_idle_worker_preemption_is_visible_without_taking_down_api(
             time.sleep(0.02)
             status = client.get("/api/capabilities").json()
         assert status["gpu_worker_state"] == "cooldown"
-        assert "preempted by the priority service" in status["gpu_worker_reason"]
+        assert "preempted by the external controller" in status["gpu_worker_reason"]
         assert client.get("/api/health").json()["status"] == "ok"
 
 

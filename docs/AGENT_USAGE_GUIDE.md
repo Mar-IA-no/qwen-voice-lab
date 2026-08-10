@@ -13,8 +13,8 @@ Reglas no negociables:
 - no incorporar audios privados, pesos, bases de datos, perfiles prosódicos ni `.env` a Git;
 - no asumir que T/S/D/R son estilos universales: pertenecen a un perfil completo de una identidad concreta;
 - no declarar una voz o perfil como canónico sólo porque renderiza;
-- en infraestructura compartida, no iniciar CUDA fuera del wrapper de admisión configurado;
-- tratar una preempción como un fallo explícito y reintentable, nunca como permiso para saltar la prioridad del sistema.
+- asumir GPU directa cuando `gpu_execution_mode` sea `in-process`;
+- sólo si una instalación declara `gpu_execution_mode=wrapped-worker`, respetar su controlador externo y tratar una preempción como un fallo explícito y reintentable.
 
 La única identidad incluida en una instalación nueva es **Amara Sol**, una voz sintética original CC0. Ninguna identidad humana privada pertenece al repositorio público.
 
@@ -59,17 +59,20 @@ Campos de capacidad relevantes:
 - modelos Base y VoiceDesign;
 - `paid_providers`, que debe permanecer vacío.
 
-Estados habituales del worker compartido:
+La instalación normal devuelve `gpu_execution_mode=in-process`: Qwen usa
+directamente el dispositivo configurado y los estados de worker no aplican.
+Sólo una instalación que optó por coordinación externa devuelve
+`wrapped-worker`; para ese modo son habituales estos estados:
 
 | Estado | Interpretación | Acción del agente |
 |---|---|---|
 | `standby` | API activa; Qwen se cargará al primer trabajo | Puede encolar |
-| `starting` | El wrapper está solicitando la GPU | Espere y observe el trabajo |
+| `starting` | El controlador está solicitando la GPU | Espere y observe el trabajo |
 | `ready` | Worker admitido y modelo disponible | Puede encolar |
 | `running` | Hay un render activo | Puede encolar; la cola es serial |
 | `cooldown` | Prioridad superior preemptó o bloqueó el worker | No martille; reintente más tarde |
-| `unavailable` | El scheduler no admite el worker | Informe el motivo al operador |
-| `misconfigured` | Falta contrato del wrapper | No intente CUDA por otra vía |
+| `unavailable` | El controlador no admite el worker | Informe el motivo al operador |
+| `misconfigured` | Falta el contrato del adaptador | Informe el problema; no intente eludirlo |
 
 `GET /api/health` prueba la API CPU; no demuestra que un modelo esté residente ni que la GPU esté libre.
 

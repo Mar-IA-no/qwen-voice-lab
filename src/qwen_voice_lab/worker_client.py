@@ -26,7 +26,7 @@ EVENT_PREFIX = "QVL_EVENT "
 
 
 class GPUWorkerUnavailable(RuntimeError):
-    """The shared scheduler did not admit or preempted the GPU worker."""
+    """The optional shared-host controller did not admit or preempted the GPU worker."""
 
 
 class WrappedQwenEngine:
@@ -50,11 +50,8 @@ class WrappedQwenEngine:
         self._logs: deque[str] = deque(maxlen=24)
 
     def readiness(self) -> tuple[bool, str | None]:
-        wrapper = Path(self.settings.gpu_wrapper).expanduser()
         if not self.settings.gpu_wrapper:
             return False, "QVL_GPU_WRAPPER is required for the wrapped worker."
-        if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
-            return False, f"Configured GPU wrapper is unavailable: {wrapper}"
         if not self.settings.gpu_cgroup_pattern:
             return False, "QVL_GPU_CGROUP_PATTERN is required for wrapper verification."
         if not self.settings.gpu_stop_command.strip():
@@ -62,6 +59,7 @@ class WrappedQwenEngine:
         if not self.settings.gpu_stop_all_command.strip():
             return False, "QVL_GPU_STOP_ALL_COMMAND is required for admission-time cleanup."
         try:
+            wrapper = self._wrapper_prefix()
             pattern = re.compile(self.settings.gpu_cgroup_pattern)
             if pattern.groups < 1:
                 return False, "QVL_GPU_CGROUP_PATTERN must contain a capturing group."
@@ -74,6 +72,12 @@ class WrappedQwenEngine:
             )
         except (re.error, ValueError) as exc:
             return False, f"Invalid GPU worker configuration: {exc}"
+        wrapper_executable = Path(wrapper[0]).expanduser()
+        if not (
+            wrapper_executable.is_file()
+            and os.access(wrapper_executable, os.X_OK)
+        ) and shutil.which(wrapper[0]) is None:
+            return False, f"Configured GPU wrapper is unavailable: {wrapper[0]}"
         executable = command[0]
         if not Path(executable).is_file() and shutil.which(executable) is None:
             return False, f"GPU worker executable is unavailable: {executable}"
@@ -197,7 +201,7 @@ class WrappedQwenEngine:
             if self._state == "cooldown" and time.monotonic() < self._cooldown_until:
                 remaining = max(1, round(self._cooldown_until - time.monotonic()))
                 raise GPUWorkerUnavailable(
-                    f"GPU reserved for the priority service; retry in about {remaining}s."
+                    f"GPU reserved for a higher-priority workload; retry in about {remaining}s."
                 )
             process = self._process
             if process is not None and process.poll() is None:
@@ -353,6 +357,13 @@ class WrappedQwenEngine:
             return shlex.split(self.settings.gpu_worker_command)
         return [sys.executable, "-m", "qwen_voice_lab.gpu_worker"]
 
+    def _wrapper_prefix(self) -> list[str]:
+        command = shlex.split(self.settings.gpu_wrapper)
+        if not command:
+            raise ValueError("QVL_GPU_WRAPPER must contain a command")
+        command[0] = str(Path(command[0]).expanduser())
+        return command
+
     def _wrapper_command(self) -> list[str]:
         environment = [
             "env",
@@ -369,7 +380,7 @@ class WrappedQwenEngine:
             f"QVL_MODEL_IDLE_SECONDS={self.settings.model_idle_seconds}",
         ]
         return [
-            str(Path(self.settings.gpu_wrapper).expanduser()),
+            *self._wrapper_prefix(),
             "--name",
             self.settings.gpu_job_name,
             "--",
@@ -388,10 +399,10 @@ class WrappedQwenEngine:
 
     def _exit_reason(self, code: int | None) -> str:
         if code == self.settings.gpu_preempt_exit_code:
-            return "GPU worker was preempted by the priority service (exit 75)."
+            return "GPU worker was preempted by the external controller (exit 75)."
         detail = self._logs[-1] if self._logs else "no worker diagnostic"
         if code in self.settings.retryable_exit_codes:
-            return f"GPU admission deferred by the priority service (exit {code}): {detail}"
+            return f"GPU admission deferred by the external controller (exit {code}): {detail}"
         return f"GPU worker stopped unexpectedly (exit {code}): {detail}"
 
     def _record_worker_exit(

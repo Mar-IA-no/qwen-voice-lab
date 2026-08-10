@@ -14,7 +14,7 @@
 
 ---
 
-Voice work is easy to generate and hard to evaluate. A promising identity can disappear among anonymous WAVs; two engines get compared with different texts; a pause changes but nobody records it; a shared GPU is loaded outside its priority boundary.
+Voice work is easy to generate and hard to evaluate. A promising identity can disappear among anonymous WAVs; two engines get compared with different texts; a pause changes but nobody records it; a finished render loses its connection to the settings that produced it.
 
 **Qwen Voice Lab makes the experiment the product.** It keeps identity, text, language, seed, score, output, timing and hardware metrics in one local workflow. VoiceDesign creates original synthetic identities. Authorized recordings can become reusable clone references. A serial queue renders through Qwen locally, while the interface preserves enough evidence to listen, compare and reproduce the result.
 
@@ -145,6 +145,10 @@ uv run hf download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
 
 The Base model performs cloning and synthesis from reusable references. VoiceDesign is needed only while creating original identities. Once dependencies and models are present locally, the voice runtime has no paid provider or remote fallback.
 
+This is the normal deployment: `QVL_REQUIRE_GPU_WRAPPER=false` and Qwen uses
+the configured CUDA device directly. No external scheduler or admission
+controller is required on a dedicated machine.
+
 ### Practical hardware targets
 
 These are operating recommendations from the validated 1.7B setup, not universal hardware floors.
@@ -157,25 +161,33 @@ These are operating recommendations from the validated 1.7B setup, not universal
 Real-engine smokes cover Base cloning, VoiceDesign generation and multi-block profile switching through the same queue used by the web application. They establish end-to-end operation on a CUDA workstation; they do not establish a quality threshold for every speaker, language or GPU.
 
 <details>
-<summary><b>Shared GPU: lazy worker and priority wrapper</b></summary>
+<summary><b>Optional: coordinate Qwen on a shared GPU host</b></summary>
 
-Dedicated machines can leave `QVL_REQUIRE_GPU_WRAPPER=false`. A shared machine can require an existing admission wrapper:
+If several applications intentionally share one GPU, Voice Lab can launch only
+its lazy Qwen worker through an external admission controller. This is an
+optional deployment adapter, not a product prerequisite. A compatible public
+reference implementation is
+[`gpu-priorityd`](https://github.com/Mar-IA-no/gpu-priorityd):
 
 ```dotenv
 QVL_REQUIRE_GPU_WRAPPER=true
-QVL_GPU_WRAPPER=/path/to/gpu-admission-wrapper
-QVL_GPU_JOBS_DIR=/path/to/scheduler/job-metadata
+QVL_GPU_WRAPPER="sudo gpu-priority --config /etc/gpu-priorityd.toml run"
 QVL_GPU_JOB_NAME=qwen-voice-lab
-QVL_GPU_CGROUP_PATTERN=(gpu-priority-job-[0-9]+-voice-lab[.]service)
+QVL_GPU_CGROUP_PATTERN=(gpu-priority-job-[0-9]+-qwen-voice-lab[.]service)
 QVL_GPU_UNIT_PREFIX=gpu-priority-job-
 QVL_GPU_RETRYABLE_EXIT_CODES=1,75
-QVL_GPU_STOP_COMMAND=/path/to/restricted-stop-helper {unit}
-QVL_GPU_STOP_ALL_COMMAND=/path/to/restricted-stop-helper --all
+QVL_GPU_STOP_COMMAND="sudo gpu-priority --config /etc/gpu-priorityd.toml cancel --unit {unit}"
+QVL_GPU_STOP_ALL_COMMAND="sudo gpu-priority --config /etc/gpu-priorityd.toml cancel --name qwen-voice-lab"
 ```
 
-The web server, catalog and serial queue remain in CPU. The first real render asks the wrapper for a reusable Qwen worker; only that worker enters CUDA. It verifies its admission marker and Linux cgroup before loading a model, stays alive for the configured idle window and exits afterward.
+`QVL_GPU_WRAPPER` is parsed as an argument-vector prefix, without a shell; Voice
+Lab appends `--name … -- <worker command>`. Configure narrowly scoped privilege
+for the exact `run` and `cancel` forms above, then complete the controller's
+host acceptance sequence before enabling this mode.
 
-If a higher-priority service preempts it, the active render fails explicitly while the UI, catalog, history and completed downloads remain online. A cooldown prevents queued comparison jobs from relaunching the scheduler in a tight loop. A later explicit job requests a fresh worker automatically.
+The web server, catalog and serial queue remain in CPU. The first real render asks the controller for a reusable Qwen worker; only that worker enters CUDA. It verifies its admission marker and Linux cgroup before loading a model, stays alive for the configured idle window and exits afterward.
+
+If a higher-priority workload preempts it, the active render fails explicitly while the UI, catalog, history and completed downloads remain online. A cooldown prevents queued comparison jobs from relaunching the controller in a tight loop. A later explicit job requests a fresh worker automatically.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full lifecycle and [`deploy/qwen-voice-lab.service.example`](deploy/qwen-voice-lab.service.example) for a sanitized persistent-service template.
 
@@ -243,22 +255,18 @@ flowchart TB
     A --> Q{{Serial job queue}}
     Q --> MOCK[Deterministic mock]
     Q --> DIRECT[Direct Qwen<br/>dedicated GPU]
-    Q --> PROXY[Wrapped-worker proxy<br/>shared GPU]
-    PROXY --> WRAP[Priority wrapper]
-    WRAP --> WORKER[Reusable Qwen worker]
     DIRECT --> BASE[1.7B Base<br/>clone + synthesis]
     DIRECT --> DESIGN[1.7B VoiceDesign]
-    WORKER --> BASE
-    WORKER --> DESIGN
 
     style B fill:#171c22,color:#fff,stroke:#79aefc
     style A fill:#171c22,color:#fff,stroke:#e0b96a
     style Q fill:#282016,color:#fff,stroke:#e0b96a
-    style PROXY fill:#282016,color:#fff,stroke:#e0b96a
-    style WRAP fill:#17231f,color:#c9f4df,stroke:#68d5a1
 ```
 
 The queue is the only route to generation. Jobs move through `queued → running → complete`, with `failed` and `cancelled` as terminal alternatives. Switching between Base and VoiceDesign unloads the current model before loading the other one. Reference prompts are cached only in worker memory.
+
+On a shared host, the optional adapter replaces `DIRECT` with an admitted,
+reusable worker; the voice, queue and rendering contracts remain unchanged.
 
 ### Operational shape
 
@@ -279,7 +287,7 @@ The queue is the only route to generation. Jobs move through `queued → running
 
 ## Security and consent
 
-The active risks are not abstract: an unauthorized voice can be cloned, a private reference can leak into Git, or a GPU worker can bypass the scheduler. The product fails closed around each boundary it can enforce.
+The active risks are not abstract: an unauthorized voice can be cloned, a private reference can leak into Git, or an optionally controlled GPU worker can bypass admission. The product fails closed around each boundary it can enforce.
 
 | Risk | Product defense |
 |---|---|
@@ -287,7 +295,7 @@ The active risks are not abstract: an unauthorized voice can be cloned, a privat
 | Private audio or state reaches the public repository | `data/`, recordings, renders, model formats, databases, profiles and environment files are ignored; only the reviewed CC0 starter is versioned |
 | A file endpoint escapes its storage root | Voice, render and archive responses resolve and re-check containment before serving |
 | A remote bind is exposed casually | Loopback by default; remote binding requires authentication or an explicit unsafe override |
-| Shared CUDA is entered outside priority admission | Optional wrapper marker + cgroup verification before model load |
+| An optional shared-host worker enters CUDA outside admission | Marker + cgroup verification before model load; dedicated mode has no external scheduler |
 | A higher-priority workload preempts the worker | Render fails explicitly; API and completed results survive; cooldown prevents relaunch loops |
 | A paid provider receives text or audio | No paid provider, telemetry client or remote voice fallback exists |
 
@@ -371,7 +379,7 @@ Perceptual promotion remains a human decision. A distinct hash, a successful loa
 qwen-voice-lab/
 ├── src/qwen_voice_lab/      FastAPI, queue, engines, storage and starter voice
 ├── frontend/                React + TypeScript instrument UI
-├── tests/                   API, queue, wrapper and lifecycle contracts
+├── tests/                   API, queue, optional adapter and lifecycle contracts
 ├── scripts/                 bootstrap, builds, archive import and GPU entrypoints
 ├── deploy/                  sanitized service and helper templates
 ├── docs/                    architecture, validation, prosody and user manuals

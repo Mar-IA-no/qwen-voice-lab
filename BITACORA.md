@@ -24,7 +24,7 @@ Deployment-specific names, addresses, paths, inventories and private evaluation 
 
 ## 2026-08-08 — Isolated shared-GPU worker
 
-Separated the persistent CPU web/API process from Qwen model residency. Shared deployments now launch a reusable worker through the configured priority wrapper only when a render arrives; worker preemption leaves the UI, catalog and downloads available.
+Added an optional shared-host adapter that can separate the persistent CPU web/API process from Qwen model residency. Dedicated installations continue to run Qwen directly by default; in adapter mode, worker preemption leaves the UI, catalog and downloads available.
 
 Added explicit runtime states, preemption diagnostics, a relaunch cooldown, worker-window reuse, a systemd deployment template and CUDA-free scheduler contract tests. Dedicated-GPU execution remains backward compatible.
 

@@ -20,7 +20,7 @@ Qwen Voice Lab is a local-first web studio for synthetic voice design, authorize
 - A functional T/S/D/R score must fail explicitly when the selected identity has no complete prosody profile.
 - Shared-GPU admission is optional and configurable; do not hard-code deployment-specific launchers, cgroup names, hosts or network addresses.
 - Preserve backward compatibility for ordinary neutral synthesis and text clients.
-- On a shared GPU, use the operator's configured admission process and obtain its explicit lease before starting CUDA.
+- Direct CUDA is the product default. On a shared GPU, use the operator's configured admission process; [`gpu-priorityd`](https://github.com/Mar-IA-no/gpu-priorityd) is an optional compatible controller.
 - Run backend tests, Ruff, the frontend production build and the packaged-static diff before publishing.
 
 ## Public-repository hygiene

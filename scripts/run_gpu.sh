@@ -13,10 +13,12 @@ GPU_WRAPPER="$(uv run python -c 'from qwen_voice_lab.config import get_settings;
 REQUIRE_WRAPPER="$(uv run python -c 'from qwen_voice_lab.config import get_settings; print(str(get_settings().require_gpu_wrapper).lower())')"
 
 if [[ "$REQUIRE_WRAPPER" == "true" && ( -z "$GPU_WRAPPER" || ! -x "$GPU_WRAPPER" ) ]]; then
-  echo "Configured GPU wrapper is unavailable: ${GPU_WRAPPER:-<empty>}" >&2
-  exit 1
+  if ! QVL_GPU_WRAPPER="$GPU_WRAPPER" uv run python -c 'import os, shlex, shutil; from pathlib import Path; command = shlex.split(os.environ.get("QVL_GPU_WRAPPER", "")); raise SystemExit(0 if command and ((Path(command[0]).expanduser().is_file() and os.access(Path(command[0]).expanduser(), os.X_OK)) or shutil.which(command[0])) else 1)'; then
+    echo "Configured GPU wrapper is unavailable: ${GPU_WRAPPER:-<empty>}" >&2
+    exit 1
+  fi
 fi
 
-# The web/API process remains CPU-only. In shared mode it launches a separate,
-# reusable Qwen worker through the wrapper when the first render is submitted.
+# Dedicated mode runs Qwen in this process. An optional shared-host
+# configuration instead launches a reusable admitted worker on first render.
 exec "$PROJECT_ROOT/.venv/bin/qwen-voice-lab"

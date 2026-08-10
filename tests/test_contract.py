@@ -8,6 +8,13 @@ from qwen_voice_lab.config import Settings
 from qwen_voice_lab.engine import QwenEngine
 
 
+def test_dedicated_gpu_mode_does_not_require_a_wrapper(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", host="127.0.0.1")
+
+    assert settings.require_gpu_wrapper is False
+    assert settings.gpu_wrapper == ""
+
+
 def test_qwen_mode_requires_gpu_wrapper_marker(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("QVL_GPU_WRAPPED", raising=False)
     settings = Settings(
