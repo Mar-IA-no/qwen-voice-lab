@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from './api'
-import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Prosody, Segment, Voice } from './types'
+import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Prosody, Segment, Voice } from './types'
 
 type View = 'studio' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
 
@@ -218,7 +218,7 @@ function Studio({ voices, jobs, notify, refresh }: {
   voices: Voice[]; jobs: Job[]; notify: (kind: 'ok' | 'error', text: string) => void; refresh: (quiet?: boolean) => Promise<void>
 }) {
   const [voiceId, setVoiceId] = useState('')
-  const [language, setLanguage] = useState<'es' | 'en'>('es')
+  const [language, setLanguage] = useState<Language>('es')
   const [title, setTitle] = useState('Nueva locución')
   const [text, setText] = useState(DEFAULT_ES)
   const [seed, setSeed] = useState(20260805)
@@ -230,7 +230,7 @@ function Studio({ voices, jobs, notify, refresh }: {
   useEffect(() => {
     if (!voiceId && voices[0]) setVoiceId(voices[0].id)
   }, [voiceId, voices])
-  useEffect(() => setText(language === 'es' ? DEFAULT_ES : DEFAULT_EN), [language])
+  useEffect(() => setText(language === 'es' ? DEFAULT_ES : language === 'en' ? DEFAULT_EN : ''), [language])
   const synthesisJobs = jobs.filter((job) => job.kind === 'synthesis')
   const lastJob = jobs.find((job) => job.id === lastJobId) ?? synthesisJobs[0]
   const selectedVoice = voices.find((voice) => voice.id === voiceId)
@@ -382,7 +382,7 @@ function Voices({ voices, jobs, notify, refresh }: {
   const [mode, setMode] = useState<'design' | 'import'>('design')
   const [busy, setBusy] = useState(false)
   const [promoting, setPromoting] = useState<string | null>(null)
-  const [design, setDesign] = useState({ name: '', description: '', instruction: 'Una voz cálida, serena y luminosa, adulta, de ritmo pausado y dicción clara; íntima sin sonar susurrada.', sample_text: DEFAULT_ES, language: 'es' as 'es' | 'en', seed: 20260805 })
+  const [design, setDesign] = useState({ name: '', description: '', instruction: 'Una voz cálida, serena y luminosa, adulta, de ritmo pausado y dicción clara; íntima sin sonar susurrada.', sample_text: DEFAULT_ES, language: 'es' as Language, seed: 20260805 })
   const designJobs = jobs.filter((job) => job.kind === 'design').slice(0, 6)
 
   const submitDesign = async (event: FormEvent) => {
@@ -435,7 +435,7 @@ function Voices({ voices, jobs, notify, refresh }: {
         {mode === 'design' ? (
           <form onSubmit={submitDesign}>
             <div className="panel-heading"><div><span className="kicker">QWEN VOICE DESIGN</span><h2>Descripción de identidad</h2></div><LanguageSwitch value={design.language} onChange={(language) => setDesign({ ...design, language })} /></div>
-            <div className="field-grid two"><label><span>Nombre</span><input required value={design.name} onChange={(e) => setDesign({ ...design, name: e.target.value })} placeholder="Amara Sol" /></label><label><span>Descripción corta</span><input value={design.description} onChange={(e) => setDesign({ ...design, description: e.target.value })} placeholder="Narradora bilingüe cálida" /></label></div>
+            <div className="field-grid two"><label><span>Nombre</span><input required value={design.name} onChange={(e) => setDesign({ ...design, name: e.target.value })} placeholder="Amara Sol" /></label><label><span>Descripción corta</span><input value={design.description} onChange={(e) => setDesign({ ...design, description: e.target.value })} placeholder="Narradora multilingüe cálida" /></label></div>
             <label className="text-field"><span>Dirección vocal</span><textarea required rows={4} value={design.instruction} onChange={(e) => setDesign({ ...design, instruction: e.target.value })} /></label>
             <label className="text-field"><span>Texto de referencia</span><textarea required rows={5} value={design.sample_text} onChange={(e) => setDesign({ ...design, sample_text: e.target.value })} /></label>
             <div className="form-footer"><label><span>Seed</span><input type="number" value={design.seed} onChange={(e) => setDesign({ ...design, seed: Number(e.target.value) })} /></label><span className="fine-print">La muestra no se suma al catálogo hasta que elijas conservarla.</span><button className="primary-button" disabled={busy}><Sparkles size={17} /> Generar muestra</button></div>
@@ -443,11 +443,11 @@ function Voices({ voices, jobs, notify, refresh }: {
         ) : (
           <form onSubmit={submitImport}>
             <div className="panel-heading"><div><span className="kicker">VOICE CLONE</span><h2>Referencia autorizada</h2></div><div className="privacy-chip"><ShieldCheck size={16} /> Solo disco local</div></div>
-            <div className="field-grid two"><label><span>Nombre</span><input name="name" required placeholder="Nombre de la voz" /></label><label><span>Idioma de referencia</span><select name="language_hint" defaultValue="multilingual"><option value="multilingual">Multilingüe</option><option value="es">Español</option><option value="en">English</option></select></label></div>
+            <div className="field-grid two"><label><span>Nombre</span><input name="name" required placeholder="Nombre de la voz" /></label><label><span>Idioma de referencia</span><select name="language_hint" defaultValue="multilingual"><option value="multilingual">Multilingüe</option><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="fr">Français</option><option value="it">Italiano</option><option value="de">Deutsch</option></select></label></div>
             <label><span>Descripción</span><input name="description" placeholder="Registro, timbre y uso previsto" /></label>
             <label className="text-field"><span>Transcripción exacta de la referencia</span><textarea name="reference_text" rows={5} placeholder="Mejora mucho la fidelidad del clon." /></label>
             <label className="drop-zone"><Upload size={27} /><strong>Seleccionar audio de referencia</strong><span>WAV, FLAC, MP3, M4A, WebM u OGG</span><input type="file" name="file" accept="audio/*" required /></label>
-            <label><span>Etiquetas separadas por coma</span><input name="tags" placeholder="narración, bilingüe, cálida" /></label>
+            <label><span>Etiquetas separadas por coma</span><input name="tags" placeholder="narración, multilingüe, cálida" /></label>
             <label className="consent"><input type="checkbox" name="consent_confirmed" value="true" required /><span>Confirmo que tengo autorización para usar esta voz y generar derivados.</span></label>
             <div className="form-footer"><span className="fine-print">El audio no sale de esta máquina y no se agrega al repositorio.</span><button className="primary-button" disabled={busy}><Upload size={17} /> Importar referencia</button></div>
           </form>
@@ -527,12 +527,12 @@ function ArchivePage({ assets }: { assets: ArchiveAsset[] }) {
 function Compare({ voices, jobs, notify }: { voices: Voice[]; jobs: Job[]; notify: (kind: 'ok' | 'error', text: string) => void }) {
   const [selected, setSelected] = useState<string[]>([])
   const [text, setText] = useState(DEFAULT_ES)
-  const [language, setLanguage] = useState<'es' | 'en'>('es')
+  const [language, setLanguage] = useState<Language>('es')
   const [title, setTitle] = useState('Comparación ciega rápida')
   const [seed, setSeed] = useState(20260805)
   const [comparison, setComparison] = useState<Comparison | null>(null)
   const [busy, setBusy] = useState(false)
-  useEffect(() => setText(language === 'es' ? DEFAULT_ES : DEFAULT_EN), [language])
+  useEffect(() => setText(language === 'es' ? DEFAULT_ES : language === 'en' ? DEFAULT_EN : ''), [language])
   const comparisonJobs = comparison ? comparison.job_ids.map((id) => jobs.find((job) => job.id === id)).filter(Boolean) as Job[] : []
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((row) => row !== id) : current.length < 5 ? [...current, id] : current)
   const submit = async (event: FormEvent) => {
@@ -587,8 +587,9 @@ function Metrics({ metrics }: { metrics?: Job['metrics'] }) {
   return <dl className="metrics"><div><dt>Duración</dt><dd>{formatDuration(metrics.duration_seconds)}</dd></div><div><dt>Generación</dt><dd>{(metrics.generation_ms / 1000).toFixed(2)} s</dd></div><div><dt>RTF</dt><dd>{metrics.rtf.toFixed(3)}</dd></div><div><dt>VRAM</dt><dd>{metrics.peak_vram_mib ? `${Math.round(metrics.peak_vram_mib)} MiB` : '—'}</dd></div></dl>
 }
 
-function LanguageSwitch({ value, onChange }: { value: 'es' | 'en'; onChange: (value: 'es' | 'en') => void }) {
-  return <div className="language-switch"><button type="button" className={value === 'es' ? 'active' : ''} onClick={() => onChange('es')}>ES</button><button type="button" className={value === 'en' ? 'active' : ''} onClick={() => onChange('en')}>EN</button></div>
+function LanguageSwitch({ value, onChange }: { value: Language; onChange: (value: Language) => void }) {
+  const languages: Language[] = ['es', 'en', 'pt', 'fr', 'it', 'de']
+  return <div className="language-switch">{languages.map((language) => <button key={language} type="button" className={value === language ? 'active' : ''} onClick={() => onChange(language)}>{language.toUpperCase()}</button>)}</div>
 }
 
 function StatusBadge({ status }: { status: Job['status'] }) { return <span className={`status-badge ${status}`}>{status === 'complete' ? 'completo' : status === 'running' ? 'renderizando' : status === 'queued' ? 'en cola' : status === 'failed' ? 'error' : 'cancelado'}</span> }

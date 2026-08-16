@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .config import Settings
-from .models import ProsodyFunction, ProsodyProfileView, ScoreSegment, Voice
+from .models import Language, ProsodyFunction, ProsodyProfileView, ScoreSegment, Voice
 
 
 class ProsodyUnavailableError(ValueError):
@@ -28,7 +28,7 @@ class ProsodyProfileDefinition(BaseModel):
     voice_ids: list[str] = Field(default_factory=list, max_length=64)
     identity_tags: list[str] = Field(default_factory=list, max_length=12)
     status: Literal["experimental", "canonical"]
-    languages: list[Literal["es", "en"]] = Field(min_length=1)
+    languages: list[Language] = Field(min_length=1)
     references: dict[ProsodyFunction, ProsodyReferenceDefinition]
     notes: list[str] = Field(default_factory=list, max_length=12)
 

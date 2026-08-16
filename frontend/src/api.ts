@@ -1,4 +1,4 @@
-import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Segment, Voice } from './types'
+import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Segment, Voice } from './types'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -31,21 +31,21 @@ export const api = {
     description: string
     instruction: string
     sample_text: string
-    language: 'es' | 'en'
+    language: Language
     seed: number
   }) => request<Job>('/api/designs', jsonPost(payload)),
   promoteDesign: (jobId: string) => request<Voice>(`/api/jobs/${jobId}/promote`, { method: 'POST' }),
   synthesize: (payload: {
     title: string
     voice_id: string
-    language: 'es' | 'en'
+    language: Language
     segments: Segment[]
     seed: number
   }) => request<Job>('/api/jobs', jsonPost(payload)),
   compare: (payload: {
     title: string
     voice_ids: string[]
-    language: 'es' | 'en'
+    language: Language
     text: string
     seed: number
   }) => request<Comparison>('/api/comparisons', jsonPost(payload)),

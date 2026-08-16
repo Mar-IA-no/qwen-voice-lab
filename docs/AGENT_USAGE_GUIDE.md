@@ -59,6 +59,10 @@ Campos de capacidad relevantes:
 - modelos Base y VoiceDesign;
 - `paid_providers`, que debe permanecer vacío.
 
+La versión actual admite los códigos `es`, `en`, `pt`, `fr`, `it` y `de`.
+Use únicamente un código anunciado por `languages`; esa capacidad confirma el
+contrato técnico, no la calidad perceptual de una identidad concreta en ese idioma.
+
 La instalación normal devuelve `gpu_execution_mode=in-process`: Qwen usa
 directamente el dispositivo configurado y los estados de worker no aplican.
 Sólo una instalación que optó por coordinación externa devuelve

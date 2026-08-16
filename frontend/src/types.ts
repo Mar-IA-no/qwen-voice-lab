@@ -1,4 +1,4 @@
-export type Language = 'es' | 'en'
+export type Language = 'es' | 'en' | 'pt' | 'fr' | 'it' | 'de'
 export type Prosody = 'neutral' | 'T' | 'S' | 'D' | 'R'
 export type JobStatus = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled'
 
@@ -44,7 +44,7 @@ export interface Voice {
   name: string
   description: string
   kind: 'clone' | 'designed'
-  language_hint: 'es' | 'en' | 'multilingual'
+  language_hint: Language | 'multilingual'
   reference_text: string
   reference_file: string
   reference_sha256: string

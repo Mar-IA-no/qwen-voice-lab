@@ -229,7 +229,14 @@ class QwenEngine:
 
     @staticmethod
     def _language(value: str) -> str:
-        return "Spanish" if value == "es" else "English"
+        return {
+            "es": "Spanish",
+            "en": "English",
+            "pt": "Portuguese",
+            "fr": "French",
+            "it": "Italian",
+            "de": "German",
+        }[value]
 
     def _seed(self, value: int) -> None:
         import torch

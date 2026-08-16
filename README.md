@@ -4,11 +4,11 @@
 
 ![Qwen Voice Lab — local voice instrument](docs/readme/hero.svg)
 
-### A local-first studio for designing, cloning, scoring and comparing bilingual voices with Qwen3-TTS.
+### A local-first studio for designing, cloning, scoring and comparing multilingual voices with Qwen3-TTS.
 
 *Turn a voice identity and an exact text into a reproducible WAV — with block-level timing, controlled comparisons and metrics attached to every render.*
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-111318)](LICENSE) ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-111318) ![Qwen3-TTS 1.7B](https://img.shields.io/badge/Qwen3--TTS-1.7B-e0b96a) ![Languages ES + EN](https://img.shields.io/badge/languages-ES%20%2B%20EN-e0b96a) ![Local-first](https://img.shields.io/badge/runtime-local--first-2e7d32) ![No paid APIs](https://img.shields.io/badge/paid%20voice%20APIs-none-2e7d32)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111318)](LICENSE) ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-111318) ![Qwen3-TTS 1.7B](https://img.shields.io/badge/Qwen3--TTS-1.7B-e0b96a) ![Languages ES EN PT FR IT DE](https://img.shields.io/badge/languages-ES%20EN%20PT%20FR%20IT%20DE-e0b96a) ![Local-first](https://img.shields.io/badge/runtime-local--first-2e7d32) ![No paid APIs](https://img.shields.io/badge/paid%20voice%20APIs-none-2e7d32)
 
 </div>
 
@@ -277,7 +277,7 @@ reusable worker; the voice, queue and rendering contracts remain unchanged.
 | Concurrent GPU workers | **1 serial worker** |
 | Voices per controlled comparison | **2–5** |
 | Blocks per score | **1–64** |
-| Languages | **ES + EN** |
+| Languages | **ES + EN + PT + FR + IT + DE** |
 | Render format | **WAV** |
 | Paid voice providers | **0** |
 | Durable metadata store | **1 local SQLite catalog** |
