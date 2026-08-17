@@ -46,3 +46,11 @@ Added a separate operational Markdown guide for agents covering discovery, authe
 Rebuilt the repository landing page as a visual product document with a branded hero, capability matrices, architecture and lifecycle diagrams, interface captures, progressive technical disclosure and direct paths to the human and agent manuals.
 
 Removed unpublished deployment-roadmap material and internal coordination language from the public tree. The public branch was republished from a curated root so removed references do not remain reachable through its ordinary commit history.
+
+## 2026-08-16 — Multilingual Qwen language contract
+
+Expanded synthesis, comparison, VoiceDesign and authorized-import contracts from Spanish and English to the six enabled Qwen languages: Spanish, English, Portuguese, French, Italian and German. The API advertises the complete set, translates stable language codes to Qwen's native labels, and the dashboard exposes the same choices.
+
+Added contract and queue coverage for every enabled language. Existing Spanish and English scores, voices and prosody profiles remain compatible; multilingual support is a technical capability and still requires perceptual review for each identity and language.
+
+Review hardening now enforces each functional prosody profile's declared languages while keeping neutral synthesis cross-lingual, exposes that readiness through the API and dashboard, clears mismatched VoiceDesign defaults on language changes, and keeps the six-language selector usable on mobile. Deployment guidance requires a verified pre-upgrade catalog snapshot when rollback may cross newly persisted multilingual voice or comparison records.

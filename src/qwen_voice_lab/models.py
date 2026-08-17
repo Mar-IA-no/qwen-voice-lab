@@ -14,6 +14,10 @@ def utc_now() -> str:
 class Language(StrEnum):
     ES = "es"
     EN = "en"
+    PT = "pt"
+    FR = "fr"
+    IT = "it"
+    DE = "de"
 
 
 class ProsodyFunction(StrEnum):
@@ -32,6 +36,7 @@ class VoiceKind(StrEnum):
 class ProsodyProfileView(BaseModel):
     id: str
     status: Literal["experimental", "canonical"]
+    languages: list[Language]
     functions: list[ProsodyFunction]
     notes: list[str] = Field(default_factory=list)
 
@@ -54,7 +59,9 @@ class Voice(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=80)]
     description: Annotated[str, Field(max_length=500)] = ""
     kind: VoiceKind
-    language_hint: Literal["es", "en", "multilingual"] = "multilingual"
+    language_hint: Literal["es", "en", "pt", "fr", "it", "de", "multilingual"] = (
+        "multilingual"
+    )
     reference_text: Annotated[str, Field(max_length=4000)] = ""
     reference_file: str
     reference_sha256: str
@@ -71,7 +78,7 @@ class VoiceView(BaseModel):
     name: str
     description: str
     kind: VoiceKind
-    language_hint: Literal["es", "en", "multilingual"]
+    language_hint: Literal["es", "en", "pt", "fr", "it", "de", "multilingual"]
     reference_text: str
     reference_sha256: str
     duration_seconds: float | None = None
@@ -199,14 +206,14 @@ class Capabilities(BaseModel):
     engine_reason: str | None = None
     base_model: str
     design_model: str
-    languages: list[str] = ["es", "en"]
+    languages: list[str] = Field(default_factory=lambda: [language.value for language in Language])
     max_upload_mib: int
     max_text_chars: int
     max_segments: int
     max_comparison_voices: int
     voice_design: bool = True
     voice_cloning: bool = True
-    paid_providers: list[str] = []
+    paid_providers: list[str] = Field(default_factory=list)
     gpu_wrapper_required: bool
     gpu_wrapper_verified: bool
     gpu_execution_mode: Literal["in-process", "wrapped-worker"] = "in-process"

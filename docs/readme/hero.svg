@@ -43,7 +43,7 @@
     <text x="0" y="154" fill="#f2f3f5" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="76" font-weight="750" letter-spacing="-3">Qwen Voice Lab</text>
     <text x="2" y="207" fill="#aeb6c1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="27">Design · clone · score · compare · render locally</text>
     <g transform="translate(0 255)" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="650" letter-spacing="2">
-      <g><rect width="148" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="74" y="26" fill="#e7e9ec" text-anchor="middle">ES + EN</text></g>
+      <g><rect width="148" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="74" y="26" fill="#e7e9ec" text-anchor="middle">6 LANGUAGES</text></g>
       <g transform="translate(162 0)"><rect width="174" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="87" y="26" fill="#e7e9ec" text-anchor="middle">LOCAL-FIRST</text></g>
       <g transform="translate(350 0)"><rect width="218" height="40" rx="20" fill="#171c22" stroke="#39424e"/><text x="109" y="26" fill="#68d5a1" text-anchor="middle">NO PAID APIS</text></g>
     </g>

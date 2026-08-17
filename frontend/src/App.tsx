@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from './api'
-import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Prosody, Segment, Voice } from './types'
+import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Prosody, Segment, Voice } from './types'
 
 type View = 'studio' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
 
@@ -218,7 +218,7 @@ function Studio({ voices, jobs, notify, refresh }: {
   voices: Voice[]; jobs: Job[]; notify: (kind: 'ok' | 'error', text: string) => void; refresh: (quiet?: boolean) => Promise<void>
 }) {
   const [voiceId, setVoiceId] = useState('')
-  const [language, setLanguage] = useState<'es' | 'en'>('es')
+  const [language, setLanguage] = useState<Language>('es')
   const [title, setTitle] = useState('Nueva locución')
   const [text, setText] = useState(DEFAULT_ES)
   const [seed, setSeed] = useState(20260805)
@@ -230,10 +230,11 @@ function Studio({ voices, jobs, notify, refresh }: {
   useEffect(() => {
     if (!voiceId && voices[0]) setVoiceId(voices[0].id)
   }, [voiceId, voices])
-  useEffect(() => setText(language === 'es' ? DEFAULT_ES : DEFAULT_EN), [language])
+  useEffect(() => setText(language === 'es' ? DEFAULT_ES : language === 'en' ? DEFAULT_EN : ''), [language])
   const synthesisJobs = jobs.filter((job) => job.kind === 'synthesis')
   const lastJob = jobs.find((job) => job.id === lastJobId) ?? synthesisJobs[0]
   const selectedVoice = voices.find((voice) => voice.id === voiceId)
+  const selectedProsodyLanguages = selectedVoice?.prosody_profile?.languages ?? []
   useEffect(() => {
     if (lastJob?.id) window.localStorage.setItem('qvl.lastJobId', lastJob.id)
   }, [lastJob?.id])
@@ -257,6 +258,9 @@ function Studio({ voices, jobs, notify, refresh }: {
     if (score.some((row) => row.prosody !== 'neutral') && !selectedVoice?.prosody_profile) {
       return notify('error', `${selectedVoice?.name ?? 'Esta voz'} no tiene un perfil T/S/D/R activo. Generá y validá sus cuatro variantes primero.`)
     }
+    if (score.some((row) => row.prosody !== 'neutral') && !selectedProsodyLanguages.includes(language)) {
+      return notify('error', `El perfil T/S/D/R de ${selectedVoice?.name ?? 'esta voz'} no está validado para ${language.toUpperCase()}. Usá Neutra o validá el perfil en ese idioma.`)
+    }
     setSubmitting(true)
     try {
       const job = await api.synthesize({ title, voice_id: voiceId, language, segments: score, seed })
@@ -273,7 +277,7 @@ function Studio({ voices, jobs, notify, refresh }: {
   return (
     <div className="studio-grid">
       <form className="panel compose-panel" onSubmit={submit}>
-        <div className="panel-heading">
+        <div className="panel-heading language-heading">
           <div><span className="kicker">COMPOSER</span><h2>Componer una locución</h2></div>
           <LanguageSwitch value={language} onChange={setLanguage} />
         </div>
@@ -302,7 +306,7 @@ function Studio({ voices, jobs, notify, refresh }: {
 
             {scoreMode && <>
               <ScoreEditor segments={segments} setSegments={setSegments} />
-              {selectedVoice && <ProsodyReadiness voice={selectedVoice} />}
+              {selectedVoice && <ProsodyReadiness voice={selectedVoice} language={language} />}
             </>}
 
             <div className="run-strip">
@@ -333,19 +337,22 @@ function Studio({ voices, jobs, notify, refresh }: {
   )
 }
 
-function ProsodyReadiness({ voice }: { voice: Voice }) {
+function ProsodyReadiness({ voice, language }: { voice: Voice; language: Language }) {
   const profile = voice.prosody_profile
+  const supportsLanguage = profile?.languages.includes(language) ?? false
   return (
-    <section className={`prosody-readiness ${profile ? 'experimental' : 'unprepared'}`}>
+    <section className={`prosody-readiness ${profile && supportsLanguage ? 'experimental' : 'unprepared'}`}>
       <div className="prosody-readiness-icon"><AudioWaveform size={19} /></div>
       <div>
         <div className="prosody-readiness-head">
-          <strong>{profile ? `${voice.name} · orquestación experimental activa` : `${voice.name} · funciones por preparar`}</strong>
-          <span>{profile ? 'T · S · D · R disponibles' : 'Sin set T · S · D · R'}</span>
+          <strong>{profile && supportsLanguage ? `${voice.name} · orquestación experimental activa` : `${voice.name} · funciones por preparar`}</strong>
+          <span>{profile ? `T · S · D · R · ${profile.languages.map((row) => row.toUpperCase()).join(' · ')}` : 'Sin set T · S · D · R'}</span>
         </div>
         <p>Cada bloque usa su función independiente y agrega después la pausa indicada. La opción Neutra conserva la referencia vocal seleccionada.</p>
-        <p>{profile
+        <p>{profile && supportsLanguage
           ? `El motor cambia de referencia entre bloques. Este perfil es ${profile.status}; revisá su procedencia y validación antes de declararlo canónico.`
+          : profile
+            ? `El perfil existe, pero no está validado para ${language.toUpperCase()}. Un bloque T/S/D/R será rechazado; usá Neutra o validá las cuatro variantes en este idioma.`
           : `Un bloque T/S/D/R será rechazado. Para habilitarlo con ${voice.name}, primero hay que generar y validar sus cuatro variantes de identidad.`}</p>
       </div>
     </section>
@@ -382,8 +389,13 @@ function Voices({ voices, jobs, notify, refresh }: {
   const [mode, setMode] = useState<'design' | 'import'>('design')
   const [busy, setBusy] = useState(false)
   const [promoting, setPromoting] = useState<string | null>(null)
-  const [design, setDesign] = useState({ name: '', description: '', instruction: 'Una voz cálida, serena y luminosa, adulta, de ritmo pausado y dicción clara; íntima sin sonar susurrada.', sample_text: DEFAULT_ES, language: 'es' as 'es' | 'en', seed: 20260805 })
+  const [design, setDesign] = useState({ name: '', description: '', instruction: 'Una voz cálida, serena y luminosa, adulta, de ritmo pausado y dicción clara; íntima sin sonar susurrada.', sample_text: DEFAULT_ES, language: 'es' as Language, seed: 20260805 })
   const designJobs = jobs.filter((job) => job.kind === 'design').slice(0, 6)
+
+  const changeDesignLanguage = (language: Language) => setDesign((current) => {
+    if (current.language === language) return current
+    return { ...current, language, instruction: '', sample_text: '' }
+  })
 
   const submitDesign = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true)
@@ -434,20 +446,20 @@ function Voices({ voices, jobs, notify, refresh }: {
       <section className="panel identity-form">
         {mode === 'design' ? (
           <form onSubmit={submitDesign}>
-            <div className="panel-heading"><div><span className="kicker">QWEN VOICE DESIGN</span><h2>Descripción de identidad</h2></div><LanguageSwitch value={design.language} onChange={(language) => setDesign({ ...design, language })} /></div>
-            <div className="field-grid two"><label><span>Nombre</span><input required value={design.name} onChange={(e) => setDesign({ ...design, name: e.target.value })} placeholder="Amara Sol" /></label><label><span>Descripción corta</span><input value={design.description} onChange={(e) => setDesign({ ...design, description: e.target.value })} placeholder="Narradora bilingüe cálida" /></label></div>
-            <label className="text-field"><span>Dirección vocal</span><textarea required rows={4} value={design.instruction} onChange={(e) => setDesign({ ...design, instruction: e.target.value })} /></label>
-            <label className="text-field"><span>Texto de referencia</span><textarea required rows={5} value={design.sample_text} onChange={(e) => setDesign({ ...design, sample_text: e.target.value })} /></label>
+            <div className="panel-heading language-heading"><div><span className="kicker">QWEN VOICE DESIGN</span><h2>Descripción de identidad</h2></div><LanguageSwitch value={design.language} onChange={changeDesignLanguage} /></div>
+            <div className="field-grid two"><label><span>Nombre</span><input required value={design.name} onChange={(e) => setDesign({ ...design, name: e.target.value })} placeholder="Amara Sol" /></label><label><span>Descripción corta</span><input value={design.description} onChange={(e) => setDesign({ ...design, description: e.target.value })} placeholder="Narradora multilingüe cálida" /></label></div>
+            <label className="text-field"><span>Dirección vocal</span><textarea required rows={4} value={design.instruction} onChange={(e) => setDesign({ ...design, instruction: e.target.value })} placeholder="Describí la voz y su forma de hablar en el idioma seleccionado." /></label>
+            <label className="text-field"><span>Texto de referencia</span><textarea required rows={5} value={design.sample_text} onChange={(e) => setDesign({ ...design, sample_text: e.target.value })} placeholder="Escribí un texto de muestra en el idioma seleccionado." /></label>
             <div className="form-footer"><label><span>Seed</span><input type="number" value={design.seed} onChange={(e) => setDesign({ ...design, seed: Number(e.target.value) })} /></label><span className="fine-print">La muestra no se suma al catálogo hasta que elijas conservarla.</span><button className="primary-button" disabled={busy}><Sparkles size={17} /> Generar muestra</button></div>
           </form>
         ) : (
           <form onSubmit={submitImport}>
             <div className="panel-heading"><div><span className="kicker">VOICE CLONE</span><h2>Referencia autorizada</h2></div><div className="privacy-chip"><ShieldCheck size={16} /> Solo disco local</div></div>
-            <div className="field-grid two"><label><span>Nombre</span><input name="name" required placeholder="Nombre de la voz" /></label><label><span>Idioma de referencia</span><select name="language_hint" defaultValue="multilingual"><option value="multilingual">Multilingüe</option><option value="es">Español</option><option value="en">English</option></select></label></div>
+            <div className="field-grid two"><label><span>Nombre</span><input name="name" required placeholder="Nombre de la voz" /></label><label><span>Idioma de referencia</span><select name="language_hint" defaultValue="multilingual"><option value="multilingual">Multilingüe</option><option value="es">Español</option><option value="en">English</option><option value="pt">Português</option><option value="fr">Français</option><option value="it">Italiano</option><option value="de">Deutsch</option></select></label></div>
             <label><span>Descripción</span><input name="description" placeholder="Registro, timbre y uso previsto" /></label>
             <label className="text-field"><span>Transcripción exacta de la referencia</span><textarea name="reference_text" rows={5} placeholder="Mejora mucho la fidelidad del clon." /></label>
             <label className="drop-zone"><Upload size={27} /><strong>Seleccionar audio de referencia</strong><span>WAV, FLAC, MP3, M4A, WebM u OGG</span><input type="file" name="file" accept="audio/*" required /></label>
-            <label><span>Etiquetas separadas por coma</span><input name="tags" placeholder="narración, bilingüe, cálida" /></label>
+            <label><span>Etiquetas separadas por coma</span><input name="tags" placeholder="narración, multilingüe, cálida" /></label>
             <label className="consent"><input type="checkbox" name="consent_confirmed" value="true" required /><span>Confirmo que tengo autorización para usar esta voz y generar derivados.</span></label>
             <div className="form-footer"><span className="fine-print">El audio no sale de esta máquina y no se agrega al repositorio.</span><button className="primary-button" disabled={busy}><Upload size={17} /> Importar referencia</button></div>
           </form>
@@ -527,12 +539,12 @@ function ArchivePage({ assets }: { assets: ArchiveAsset[] }) {
 function Compare({ voices, jobs, notify }: { voices: Voice[]; jobs: Job[]; notify: (kind: 'ok' | 'error', text: string) => void }) {
   const [selected, setSelected] = useState<string[]>([])
   const [text, setText] = useState(DEFAULT_ES)
-  const [language, setLanguage] = useState<'es' | 'en'>('es')
+  const [language, setLanguage] = useState<Language>('es')
   const [title, setTitle] = useState('Comparación ciega rápida')
   const [seed, setSeed] = useState(20260805)
   const [comparison, setComparison] = useState<Comparison | null>(null)
   const [busy, setBusy] = useState(false)
-  useEffect(() => setText(language === 'es' ? DEFAULT_ES : DEFAULT_EN), [language])
+  useEffect(() => setText(language === 'es' ? DEFAULT_ES : language === 'en' ? DEFAULT_EN : ''), [language])
   const comparisonJobs = comparison ? comparison.job_ids.map((id) => jobs.find((job) => job.id === id)).filter(Boolean) as Job[] : []
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((row) => row !== id) : current.length < 5 ? [...current, id] : current)
   const submit = async (event: FormEvent) => {
@@ -541,7 +553,7 @@ function Compare({ voices, jobs, notify }: { voices: Voice[]; jobs: Job[]; notif
   }
   return <div className="compare-layout">
     <form className="panel compare-builder" onSubmit={submit}>
-      <div className="panel-heading"><div><span className="kicker">A/B/N LAB</span><h2>Mismo texto, mismas condiciones</h2></div><LanguageSwitch value={language} onChange={setLanguage} /></div>
+      <div className="panel-heading language-heading"><div><span className="kicker">A/B/N LAB</span><h2>Mismo texto, mismas condiciones</h2></div><LanguageSwitch value={language} onChange={setLanguage} /></div>
       <label><span>Nombre</span><input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <div className="voice-picker"><div className="picker-head"><strong>Elegí de 2 a 5 voces</strong><span>{selected.length}/5</span></div>{voices.map((voice) => <button type="button" key={voice.id} className={selected.includes(voice.id) ? 'selected' : ''} onClick={() => toggle(voice.id)}><span className="check-box">{selected.includes(voice.id) && <Check size={14} />}</span><div><strong>{voice.name}</strong><span>{voice.kind} · {formatDuration(voice.duration_seconds)}</span></div></button>)}</div>
       <label className="text-field"><span>Texto común</span><textarea rows={8} value={text} onChange={(e) => setText(e.target.value)} /></label>
@@ -587,8 +599,9 @@ function Metrics({ metrics }: { metrics?: Job['metrics'] }) {
   return <dl className="metrics"><div><dt>Duración</dt><dd>{formatDuration(metrics.duration_seconds)}</dd></div><div><dt>Generación</dt><dd>{(metrics.generation_ms / 1000).toFixed(2)} s</dd></div><div><dt>RTF</dt><dd>{metrics.rtf.toFixed(3)}</dd></div><div><dt>VRAM</dt><dd>{metrics.peak_vram_mib ? `${Math.round(metrics.peak_vram_mib)} MiB` : '—'}</dd></div></dl>
 }
 
-function LanguageSwitch({ value, onChange }: { value: 'es' | 'en'; onChange: (value: 'es' | 'en') => void }) {
-  return <div className="language-switch"><button type="button" className={value === 'es' ? 'active' : ''} onClick={() => onChange('es')}>ES</button><button type="button" className={value === 'en' ? 'active' : ''} onClick={() => onChange('en')}>EN</button></div>
+function LanguageSwitch({ value, onChange }: { value: Language; onChange: (value: Language) => void }) {
+  const languages: Language[] = ['es', 'en', 'pt', 'fr', 'it', 'de']
+  return <div className="language-switch">{languages.map((language) => <button key={language} type="button" className={value === language ? 'active' : ''} onClick={() => onChange(language)}>{language.toUpperCase()}</button>)}</div>
 }
 
 function StatusBadge({ status }: { status: Job['status'] }) { return <span className={`status-badge ${status}`}>{status === 'complete' ? 'completo' : status === 'running' ? 'renderizando' : status === 'queued' ? 'en cola' : status === 'failed' ? 'error' : 'cancelado'}</span> }

@@ -29,6 +29,7 @@ from .models import (
     DesignRequest,
     Job,
     JobView,
+    Language,
     SynthesisRequest,
     Voice,
     VoiceKind,
@@ -235,7 +236,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> VoiceView:
         if not consent_confirmed:
             raise HTTPException(422, "Permission to use this voice must be confirmed.")
-        if language_hint not in {"es", "en", "multilingual"}:
+        if language_hint != "multilingual" and language_hint not in {
+            language.value for language in Language
+        }:
             raise HTTPException(422, "Unsupported language hint.")
         suffix = ALLOWED_AUDIO_TYPES.get(file.content_type or "")
         if not suffix:

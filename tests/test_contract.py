@@ -8,6 +8,21 @@ from qwen_voice_lab.config import Settings
 from qwen_voice_lab.engine import QwenEngine
 
 
+@pytest.mark.parametrize(
+    ("code", "qwen_name"),
+    [
+        ("es", "Spanish"),
+        ("en", "English"),
+        ("pt", "Portuguese"),
+        ("fr", "French"),
+        ("it", "Italian"),
+        ("de", "German"),
+    ],
+)
+def test_language_codes_map_to_qwen_native_names(code: str, qwen_name: str) -> None:
+    assert QwenEngine._language(code) == qwen_name
+
+
 def test_dedicated_gpu_mode_does_not_require_a_wrapper(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path / "data", host="127.0.0.1")
 

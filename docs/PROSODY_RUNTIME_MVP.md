@@ -2,7 +2,7 @@
 
 ## Decision
 
-The LAB may switch Qwen voice-clone references per score block when, and only when, the selected identity has a complete local T/S/D/R profile. `neutral` keeps the catalog voice reference. A functional block on an identity without a profile is rejected before queueing.
+The LAB may switch Qwen voice-clone references per score block when, and only when, the selected identity has a complete local T/S/D/R profile that declares the requested language. `neutral` keeps the catalog voice reference. A functional block on an identity without a profile, or outside its declared languages, is rejected before queueing.
 
 This is reference-conditioned orchestration, not a universal style transform. Profiles belong to an identity and cannot be transferred between voices.
 
@@ -16,7 +16,7 @@ Profiles live under ignored `data/prosody_profiles/*.json`. A profile declares:
 - the exact transcript, SHA-256 and provenance of every reference;
 - supported languages and methodological notes.
 
-Startup resolves every file below `data/`, verifies its hash and fails closed on incomplete, ambiguous or invalid profiles. The API exposes only profile ID, status, functions and notes; local paths remain private.
+Startup resolves every file below `data/`, verifies its hash and fails closed on incomplete, ambiguous or invalid profiles. The API exposes only profile ID, status, functions, supported languages and notes; local paths remain private.
 
 ## Local experimental profiles
 

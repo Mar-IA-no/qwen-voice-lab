@@ -4,11 +4,11 @@
 
 ![Qwen Voice Lab — local voice instrument](docs/readme/hero.svg)
 
-### A local-first studio for designing, cloning, scoring and comparing bilingual voices with Qwen3-TTS.
+### A local-first studio for designing, cloning, scoring and comparing multilingual voices with Qwen3-TTS.
 
 *Turn a voice identity and an exact text into a reproducible WAV — with block-level timing, controlled comparisons and metrics attached to every render.*
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-111318)](LICENSE) ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-111318) ![Qwen3-TTS 1.7B](https://img.shields.io/badge/Qwen3--TTS-1.7B-e0b96a) ![Languages ES + EN](https://img.shields.io/badge/languages-ES%20%2B%20EN-e0b96a) ![Local-first](https://img.shields.io/badge/runtime-local--first-2e7d32) ![No paid APIs](https://img.shields.io/badge/paid%20voice%20APIs-none-2e7d32)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111318)](LICENSE) ![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-111318) ![Qwen3-TTS 1.7B](https://img.shields.io/badge/Qwen3--TTS-1.7B-e0b96a) ![Languages ES EN PT FR IT DE](https://img.shields.io/badge/languages-ES%20EN%20PT%20FR%20IT%20DE-e0b96a) ![Local-first](https://img.shields.io/badge/runtime-local--first-2e7d32) ![No paid APIs](https://img.shields.io/badge/paid%20voice%20APIs-none-2e7d32)
 
 </div>
 
@@ -206,6 +206,21 @@ Then open `http://127.0.0.1:8788`. A non-loopback bind requires a token of at le
 
 </details>
 
+### Deployment and rollback boundary
+
+Before deploying a release that expands persisted enum values, drain the queue,
+record the current Git commit and take a versioned, restorable snapshot of the
+local catalog. At minimum, preserve `qwen_voice_lab.sqlite3`, `voices/` and
+`prosody_profiles/` from the configured `QVL_DATA_DIR`; a full data-root snapshot
+is preferred when storage permits. Use an SQLite-aware backup while the service
+is online, or stop the service before copying the database and its WAL files.
+
+If a rollback happens after PT/FR/IT/DE `Voice` or `Comparison` records have been
+written, restore the matching pre-deployment catalog snapshot before starting the
+older release. A code-only rollback is not sufficient because the older model
+contract cannot deserialize those newer enum values. Verify the snapshot on the
+host before enabling broad multilingual writes.
+
 ## Scored prosody
 
 A score contains **1–64 ordered blocks**. Every block preserves three things:
@@ -225,7 +240,7 @@ A score contains **1–64 ordered blocks**. Every block preserves three things:
 | `pause_after_ms` | Silence appended **after** the block; `1000` = one second |
 | `prosody` | `neutral`, `T`, `S`, `D` or `R` |
 
-`neutral` uses the selected catalog reference. T/S/D/R select the matching reference from a complete local profile for **that same identity**. A functional score for a voice without a complete profile is rejected before queueing.
+`neutral` uses the selected catalog reference. T/S/D/R select the matching reference from a complete local profile for **that same identity and requested language**. A functional score is rejected before queueing when the voice has no complete profile or the profile does not declare the requested language.
 
 ```mermaid
 flowchart LR
@@ -277,7 +292,7 @@ reusable worker; the voice, queue and rendering contracts remain unchanged.
 | Concurrent GPU workers | **1 serial worker** |
 | Voices per controlled comparison | **2–5** |
 | Blocks per score | **1–64** |
-| Languages | **ES + EN** |
+| Languages | **ES + EN + PT + FR + IT + DE** |
 | Render format | **WAV** |
 | Paid voice providers | **0** |
 | Durable metadata store | **1 local SQLite catalog** |

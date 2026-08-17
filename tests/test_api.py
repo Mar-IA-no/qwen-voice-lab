@@ -75,14 +75,17 @@ def build_client(tmp_path: Path, with_prosody: bool = False) -> TestClient:
 
 
 def import_voice(
-    client: TestClient, name: str = "Test voice", tags: str = "test,bilingual"
+    client: TestClient,
+    name: str = "Test voice",
+    tags: str = "test,bilingual",
+    language_hint: str = "multilingual",
 ) -> dict:
     response = client.post(
         "/api/voices",
         data={
             "name": name,
             "description": "Local fixture",
-            "language_hint": "multilingual",
+            "language_hint": language_hint,
             "reference_text": "Esta es una referencia autorizada.",
             "tags": tags,
             "consent_confirmed": "true",
@@ -99,8 +102,45 @@ def test_capabilities_are_local_and_free(tmp_path: Path) -> None:
         assert payload["engine"] == "mock"
         assert payload["engine_ready"] is True
         assert payload["paid_providers"] == []
-        assert payload["languages"] == ["es", "en"]
+        assert payload["languages"] == ["es", "en", "pt", "fr", "it", "de"]
         assert payload["gpu_wrapper_verified"] is False
+
+
+@pytest.mark.parametrize(
+    ("language", "text"),
+    [
+        ("es", "Respira con calma."),
+        ("en", "Breathe calmly."),
+        ("pt", "Respire com calma."),
+        ("fr", "Respirez calmement."),
+        ("it", "Respira con calma."),
+        ("de", "Atme ruhig."),
+    ],
+)
+def test_synthesis_accepts_every_supported_language(
+    tmp_path: Path, language: str, text: str
+) -> None:
+    with build_client(tmp_path) as client:
+        response = client.post(
+            "/api/jobs",
+            json={
+                "title": f"Language {language}",
+                "voice_id": "voice_amara_sol",
+                "language": language,
+                "segments": [{"id": "p01", "text": text}],
+            },
+        )
+        assert response.status_code == 202, response.text
+        assert wait_for(client, response.json()["id"])["status"] == "complete"
+
+
+@pytest.mark.parametrize("language_hint", ["es", "en", "pt", "fr", "it", "de"])
+def test_voice_import_accepts_every_supported_language_hint(
+    tmp_path: Path, language_hint: str
+) -> None:
+    with build_client(tmp_path) as client:
+        voice = import_voice(client, language_hint=language_hint)
+        assert voice["language_hint"] == language_hint
 
 
 def test_remote_binding_requires_authentication_or_explicit_override(tmp_path: Path) -> None:
@@ -201,6 +241,7 @@ def test_scored_synthesis_completes_with_metrics(tmp_path: Path) -> None:
         voice = import_voice(client, tags="test,bilingual,profiled")
         listed = client.get("/api/voices").json()[0]
         assert listed["prosody_profile"]["functions"] == ["T", "S", "D", "R"]
+        assert listed["prosody_profile"]["languages"] == ["es", "en"]
         response = client.post(
             "/api/jobs",
             json={
@@ -229,6 +270,40 @@ def test_scored_synthesis_completes_with_metrics(tmp_path: Path) -> None:
         assert download.content == audio.content
         assert download.headers["content-disposition"].startswith("attachment")
         assert "Scored%20ES.wav" in download.headers["content-disposition"]
+
+
+def test_functional_prosody_requires_profile_language_but_neutral_remains_available(
+    tmp_path: Path,
+) -> None:
+    with build_client(tmp_path, with_prosody=True) as client:
+        voice = import_voice(client, tags="test,profiled")
+        functional = client.post(
+            "/api/jobs",
+            json={
+                "title": "Functional PT",
+                "voice_id": voice["id"],
+                "language": "pt",
+                "segments": [{"id": "p01", "text": "Respire com calma.", "prosody": "T"}],
+            },
+        )
+        assert functional.status_code == 409
+        assert "not validated for pt" in functional.json()["detail"]
+        assert "Validated languages: es, en" in functional.json()["detail"]
+        assert client.get("/api/jobs").json() == []
+
+        neutral = client.post(
+            "/api/jobs",
+            json={
+                "title": "Neutral PT",
+                "voice_id": voice["id"],
+                "language": "pt",
+                "segments": [
+                    {"id": "p01", "text": "Respire com calma.", "prosody": "neutral"}
+                ],
+            },
+        )
+        assert neutral.status_code == 202
+        assert wait_for(client, neutral.json()["id"])["status"] == "complete"
 
 
 def test_prosody_changes_reference_and_unsupported_voice_is_rejected(tmp_path: Path) -> None:
