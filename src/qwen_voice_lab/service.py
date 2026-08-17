@@ -71,7 +71,7 @@ class JobManager:
         voice = self.store.get_voice(request.voice_id)
         if not voice:
             raise KeyError(request.voice_id)
-        self.prosody.validate_score(voice, request.segments)
+        self.prosody.validate_score(voice, request.language, request.segments)
         job = Job(
             id=new_id("job"),
             kind=JobKind.SYNTHESIS,

@@ -335,6 +335,9 @@ input::placeholder, textarea::placeholder { color: #55606a; }
   .topbar { height: 76px; padding: 16px 18px; }
   .topbar h1 { font-size: 19px; }
   .page { padding: 20px 16px 40px; }
+  .language-heading { align-items: stretch; flex-direction: column; }
+  .language-heading .language-switch { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); width: 100%; }
+  .language-heading .language-switch button { width: auto; min-width: 0; }
   .field-grid.two, .settings-grid, .stats-row, .studio-side { grid-template-columns: 1fr; }
   .run-strip { grid-template-columns: 1fr; }
   .score-row { grid-template-columns: 30px 1fr; }

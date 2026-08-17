@@ -55,6 +55,7 @@ export interface Voice {
   prosody_profile?: {
     id: string
     status: 'experimental' | 'canonical'
+    languages: Language[]
     functions: Prosody[]
     notes: string[]
   } | null

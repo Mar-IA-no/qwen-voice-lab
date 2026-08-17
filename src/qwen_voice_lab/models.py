@@ -36,6 +36,7 @@ class VoiceKind(StrEnum):
 class ProsodyProfileView(BaseModel):
     id: str
     status: Literal["experimental", "canonical"]
+    languages: list[Language]
     functions: list[ProsodyFunction]
     notes: list[str] = Field(default_factory=list)
 

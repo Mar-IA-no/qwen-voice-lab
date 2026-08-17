@@ -2,7 +2,7 @@
 
 ## Decision
 
-The LAB may switch Qwen voice-clone references per score block when, and only when, the selected identity has a complete local T/S/D/R profile. `neutral` keeps the catalog voice reference. A functional block on an identity without a profile is rejected before queueing.
+The LAB may switch Qwen voice-clone references per score block when, and only when, the selected identity has a complete local T/S/D/R profile that declares the requested language. `neutral` keeps the catalog voice reference. A functional block on an identity without a profile, or outside its declared languages, is rejected before queueing.
 
 This is reference-conditioned orchestration, not a universal style transform. Profiles belong to an identity and cannot be transferred between voices.
 

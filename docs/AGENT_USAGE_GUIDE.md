@@ -193,7 +193,8 @@ Semántica operativa:
 - `pause_after_ms` es silencio **después** del bloque;
 - `neutral` usa la referencia principal de la identidad;
 - T/S/D/R seleccionan referencias distintas del perfil de esa misma identidad;
-- un bloque funcional para una voz sin `prosody_profile` se rechaza antes de encolarse;
+- un bloque funcional para una voz sin `prosody_profile`, o en un idioma no
+  declarado por ese perfil, se rechaza antes de encolarse;
 - el perfil debe declarar las cuatro funciones; no mezcle referencias entre identidades;
 - los IDs de segmento son únicos y estables dentro de la partitura.
 
@@ -259,7 +260,7 @@ Clasifique antes de reintentar:
 
 - **validación 4xx:** corrija el payload; no repita igual;
 - **voz inexistente 404:** refresque catálogo y solicite un ID válido;
-- **prosodia no soportada 409:** use `neutral` o una identidad con perfil completo; no fabrique el perfil;
+- **prosodia no soportada 409:** use `neutral` o una identidad cuyo perfil completo declare el idioma solicitado; no fabrique el perfil;
 - **preempción/cooldown:** preserve el trabajo fallido, espere el fin del cooldown y cree un nuevo pedido explícito si sigue siendo necesario;
 - **worker mal configurado/no disponible:** escale al operador; no ejecute el modelo directamente;
 - **cancelado por el usuario:** no reintente sin una nueva intención explícita.
@@ -273,7 +274,7 @@ Una preempción puede terminar la generación activa, pero la API, el catálogo 
 - [ ] El motor y su estado permiten encolar.
 - [ ] La identidad existe y su uso está autorizado.
 - [ ] El idioma, texto y seed están fijados.
-- [ ] Si uso T/S/D/R, la voz expone un perfil completo.
+- [ ] Si uso T/S/D/R, la voz expone un perfil completo que declara el idioma solicitado.
 - [ ] La partitura no contiene bloques vacíos y las pausas están en milisegundos.
 - [ ] Registraré `job_id`, estado terminal, hash y métricas.
 - [ ] Recuperaré el audio mediante `/download`, no desde rutas internas.

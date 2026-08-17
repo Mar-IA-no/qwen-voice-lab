@@ -122,17 +122,30 @@ class ProsodyRegistry:
         return ProsodyProfileView(
             id=profile.definition.id,
             status=profile.definition.status,
+            languages=profile.definition.languages,
             functions=[ProsodyFunction.T, ProsodyFunction.S, ProsodyFunction.D, ProsodyFunction.R],
             notes=profile.definition.notes,
         )
 
-    def validate_score(self, voice: Voice, segments: list[ScoreSegment]) -> None:
+    def validate_score(
+        self, voice: Voice, language: Language, segments: list[ScoreSegment]
+    ) -> None:
         requested = {segment.prosody for segment in segments} - {ProsodyFunction.NEUTRAL}
-        if requested and not self.profile_for(voice):
+        if not requested:
+            return
+        profile = self.profile_for(voice)
+        if not profile:
             functions = ", ".join(sorted(function.value for function in requested))
             raise ProsodyUnavailableError(
                 f"Voice '{voice.name}' has no active prosody profile for {functions}. "
                 "Generate and validate its T/S/D/R variants first."
+            )
+        if language not in profile.definition.languages:
+            supported = ", ".join(row.value for row in profile.definition.languages)
+            raise ProsodyUnavailableError(
+                f"Voice '{voice.name}' prosody profile is not validated for {language.value}. "
+                f"Validated languages: {supported}. Use neutral prosody or validate a profile "
+                "for the requested language first."
             )
 
     def voice_for(self, voice: Voice, function: ProsodyFunction) -> Voice:

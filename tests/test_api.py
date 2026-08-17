@@ -241,6 +241,7 @@ def test_scored_synthesis_completes_with_metrics(tmp_path: Path) -> None:
         voice = import_voice(client, tags="test,bilingual,profiled")
         listed = client.get("/api/voices").json()[0]
         assert listed["prosody_profile"]["functions"] == ["T", "S", "D", "R"]
+        assert listed["prosody_profile"]["languages"] == ["es", "en"]
         response = client.post(
             "/api/jobs",
             json={
@@ -269,6 +270,40 @@ def test_scored_synthesis_completes_with_metrics(tmp_path: Path) -> None:
         assert download.content == audio.content
         assert download.headers["content-disposition"].startswith("attachment")
         assert "Scored%20ES.wav" in download.headers["content-disposition"]
+
+
+def test_functional_prosody_requires_profile_language_but_neutral_remains_available(
+    tmp_path: Path,
+) -> None:
+    with build_client(tmp_path, with_prosody=True) as client:
+        voice = import_voice(client, tags="test,profiled")
+        functional = client.post(
+            "/api/jobs",
+            json={
+                "title": "Functional PT",
+                "voice_id": voice["id"],
+                "language": "pt",
+                "segments": [{"id": "p01", "text": "Respire com calma.", "prosody": "T"}],
+            },
+        )
+        assert functional.status_code == 409
+        assert "not validated for pt" in functional.json()["detail"]
+        assert "Validated languages: es, en" in functional.json()["detail"]
+        assert client.get("/api/jobs").json() == []
+
+        neutral = client.post(
+            "/api/jobs",
+            json={
+                "title": "Neutral PT",
+                "voice_id": voice["id"],
+                "language": "pt",
+                "segments": [
+                    {"id": "p01", "text": "Respire com calma.", "prosody": "neutral"}
+                ],
+            },
+        )
+        assert neutral.status_code == 202
+        assert wait_for(client, neutral.json()["id"])["status"] == "complete"
 
 
 def test_prosody_changes_reference_and_unsupported_voice_is_rejected(tmp_path: Path) -> None:

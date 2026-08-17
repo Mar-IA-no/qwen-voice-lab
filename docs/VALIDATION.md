@@ -13,6 +13,16 @@ The continuous-integration workflow runs:
 
 Coverage includes consent enforcement, remote authentication, path privacy, archive resolution, scored pauses, per-function reference selection, rejection of unsupported prosody, VoiceDesign promotion idempotence, controlled comparisons, download semantics, direct-GPU defaults, optional GPU admission verification, multi-argument controller prefixes, retryable controller exits, restricted metadata cleanup and the absence of paid voice providers. A controller fixture also verifies lazy worker admission, reuse within one window, preemption isolation, API survival and launch cooldown without requiring CUDA.
 
+Multilingual contract coverage verifies all advertised synthesis and import codes,
+the exact code-to-Qwen label mapping, exposure of profile languages and rejection
+of functional prosody outside those languages. Neutral synthesis remains
+available across the advertised language set without a functional profile.
+
+Before production deployment, the operator must verify a restorable snapshot of
+the configured catalog and record the pre-deployment Git commit. Rollback after
+new multilingual `Voice` or `Comparison` records are persisted restores that
+snapshot together with the older code; code rollback alone is not a valid test.
+
 An explicit root-only integration suite uses real `systemd-run` scopes with a fake non-CUDA worker. It proves that cancellation and FastAPI shutdown leave the admitted transient unit inactive. This test is opt-in through `QVL_RUN_SYSTEMD_TESTS=1` and is not run in ordinary CI.
 
 ## Bundled starter
