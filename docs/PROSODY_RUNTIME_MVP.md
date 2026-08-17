@@ -16,7 +16,7 @@ Profiles live under ignored `data/prosody_profiles/*.json`. A profile declares:
 - the exact transcript, SHA-256 and provenance of every reference;
 - supported languages and methodological notes.
 
-Startup resolves every file below `data/`, verifies its hash and fails closed on incomplete, ambiguous or invalid profiles. The API exposes only profile ID, status, functions and notes; local paths remain private.
+Startup resolves every file below `data/`, verifies its hash and fails closed on incomplete, ambiguous or invalid profiles. The API exposes only profile ID, status, functions, supported languages and notes; local paths remain private.
 
 ## Local experimental profiles
 
