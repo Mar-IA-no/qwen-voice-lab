@@ -54,3 +54,11 @@ Expanded synthesis, comparison, VoiceDesign and authorized-import contracts from
 Added contract and queue coverage for every enabled language. Existing Spanish and English scores, voices and prosody profiles remain compatible; multilingual support is a technical capability and still requires perceptual review for each identity and language.
 
 Review hardening now enforces each functional prosody profile's declared languages while keeping neutral synthesis cross-lingual, exposes that readiness through the API and dashboard, clears mismatched VoiceDesign defaults on language changes, and keeps the six-language selector usable on mobile. Deployment guidance requires a verified pre-upgrade catalog snapshot when rollback may cross newly persisted multilingual voice or comparison records.
+
+## 2026-08-17 — Six-language release validation
+
+Merged the multilingual contribution after independent review, documentation synchronization and successful pull-request and post-merge CI. The human guide, PDF and public screenshots now present the same Spanish, English, Portuguese, French, Italian and German contract as the API and dashboard.
+
+A controlled CUDA smoke used the bundled CC0 Amara Sol identity, one neutral segment per language, the same seed and semantically equivalent short texts. The six outputs measured 8.88–11.12 seconds. After the initial load, five warm renders averaged approximately 5.90 seconds of generation and RTF 0.622; peak allocated VRAM was approximately 4.7 GiB. A separate Portuguese request then completed through the persistent web queue, isolated worker and downloadable job path.
+
+These observations validate the six-language technical pipeline on the tested setup. They do not establish pronunciation quality, naturalness or cross-language identity continuity; those remain perceptual listening questions.
