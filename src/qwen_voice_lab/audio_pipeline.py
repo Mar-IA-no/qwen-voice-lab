@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import os
+import stat
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +14,8 @@ from .engine import sha256_file, write_wav
 from .models import ProjectSegment, Take
 
 
-def resolve_take_asset(take: Take, projects_root: Path, *, raw: bool = False) -> Path:
+def read_take_asset(take: Take, projects_root: Path, *, raw: bool = False) -> tuple[bytes, str]:
+    """Read, authenticate, and return the exact immutable bytes a caller will consume."""
     configured = Path(take.raw_file if raw else take.trimmed_file)
     lexical_root = projects_root.absolute()
     lexical_path = configured.absolute()
@@ -28,12 +33,26 @@ def resolve_take_asset(take: Take, projects_root: Path, *, raw: bool = False) ->
         raise ValueError("take audio is unavailable") from exc
     if allowed != path.parent and allowed not in path.parents:
         raise ValueError("take audio is outside its project directory")
-    if not path.is_file():
-        raise ValueError("take audio is not a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(configured, flags)
+    except OSError as exc:
+        raise ValueError("take audio could not be opened safely") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("take audio is not a regular file")
+        chunks = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+        data = b"".join(chunks)
+    finally:
+        os.close(descriptor)
     expected = take.raw_sha256 if raw else take.trimmed_sha256
-    if sha256_file(path) != expected:
+    current_sha256 = hashlib.sha256(data).hexdigest()
+    if current_sha256 != expected:
         raise ValueError("take audio SHA-256 does not match its immutable record")
-    return path
+    return data, current_sha256
 
 
 def trim_speech_edges(
@@ -87,9 +106,8 @@ def build_timeline(
             or take.text_sha256 != segment.text_sha256
         ):
             raise ValueError(f"selected take {take.id} is incompatible with segment {segment.id}")
-        path = resolve_take_asset(take, projects_root)
-        verified_sha256 = sha256_file(path)
-        audio, rate = sf.read(path, dtype="float32", always_2d=False)
+        asset, verified_sha256 = read_take_asset(take, projects_root)
+        audio, rate = sf.read(io.BytesIO(asset), dtype="float32", always_2d=False)
         if sample_rate is None:
             sample_rate = rate
         if rate != sample_rate:

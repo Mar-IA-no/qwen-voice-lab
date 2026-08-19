@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import io
 import os
+import sqlite3
 import time
 from pathlib import Path
 
+import numpy as np
+import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
+from qwen_voice_lab import audio_pipeline
 from qwen_voice_lab.app import create_app
 from qwen_voice_lab.config import Settings
 from qwen_voice_lab.longform import deterministic_seed
-from qwen_voice_lab.models import ProjectRun, ProjectStatus, QualityReport
+from qwen_voice_lab.models import ProjectRun, ProjectStatus, QualityReport, RunStatus
 from qwen_voice_lab.quality import (
     MOCK_IDENTITY_MODEL_SHA256,
     MOCK_IDENTITY_VALIDATOR,
@@ -295,6 +300,48 @@ def test_take_assets_fail_closed_after_tamper_or_symlink(tmp_path: Path) -> None
         assert client.post(f"/api/projects/{project['id']}/preview", json={}).status_code == 409
 
 
+def test_assembly_decodes_the_same_authenticated_bytes_it_certifies(
+    tmp_path: Path, monkeypatch
+) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        run = client.post(f"/api/projects/{project['id']}/runs").json()
+        assert wait_run(client, run["id"])["status"] == "complete"
+        detail = client.get(f"/api/projects/{project['id']}").json()
+        take = client.app.state.store.get_take(detail["segments"][0]["selected_take_id"])
+        assert take is not None
+        speech = Path(take.trimmed_file)
+        original_bytes = speech.read_bytes()
+        original_audio, rate = sf.read(io.BytesIO(original_bytes), dtype="float32")
+        replacement = tmp_path / "replacement.wav"
+        sf.write(replacement, np.full(len(original_audio), 0.5, dtype=np.float32), rate)
+        replacement_bytes = replacement.read_bytes()
+
+        original_read = audio_pipeline.sf.read
+
+        def replace_path_before_decode(source, *args, **kwargs):
+            if isinstance(source, io.BytesIO):
+                speech.write_bytes(replacement_bytes)
+            return original_read(source, *args, **kwargs)
+
+        monkeypatch.setattr(audio_pipeline.sf, "read", replace_path_before_decode)
+        preview_response = client.post(f"/api/projects/{project['id']}/preview", json={})
+        assert preview_response.status_code == 201, preview_response.text
+        preview = preview_response.json()
+        manifest = client.get(f"/api/assemblies/{preview['id']}/manifest").json()
+        assert manifest["timeline"][0]["take_sha256"] == take.trimmed_sha256
+        assembled, _ = original_read(
+            tmp_path
+            / "data"
+            / "projects"
+            / project["id"]
+            / "assemblies"
+            / preview["id"]
+            / "audio.wav",
+            dtype="float32",
+        )
+        np.testing.assert_allclose(assembled[: len(original_audio)], original_audio, atol=1e-6)
+
 def test_blank_audit_and_calibration_notes_are_rejected(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         project = create_project(client)
@@ -367,3 +414,58 @@ def test_startup_reconciles_interrupted_project_status(tmp_path: Path) -> None:
         assert detail["status"] == "needs_review"
         run = restarted.get("/api/project-runs/run_interrupted").json()
         assert run["status"] == "failed"
+
+
+def test_startup_reconciles_generating_project_with_already_terminal_run(
+    tmp_path: Path,
+) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        row = client.app.state.store.get_project(project["id"])
+        assert row is not None
+        row.status = ProjectStatus.GENERATING
+        client.app.state.store.save_project(row)
+        client.app.state.store.save_run(
+            ProjectRun(
+                id="run_already_failed",
+                project_id=project["id"],
+                revision_id=project["revision"]["id"],
+                segment_ids=[project["segments"][0]["id"]],
+                status=RunStatus.FAILED,
+                error="crash window fixture",
+            )
+        )
+    with client_for(tmp_path) as restarted:
+        detail = restarted.get(f"/api/projects/{project['id']}").json()
+        assert detail["status"] == "needs_review"
+        run = restarted.get("/api/project-runs/run_already_failed").json()
+        assert run["status"] == "failed"
+        assert run["error"] == "crash window fixture"
+
+
+def test_terminal_run_and_project_state_roll_back_as_one_transaction(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        created = create_project(client)
+        store = client.app.state.store
+        project = store.get_project(created["id"])
+        assert project is not None
+        run = ProjectRun(
+            id="run_atomic_terminal",
+            project_id=project.id,
+            revision_id=created["revision"]["id"],
+            segment_ids=[created["segments"][0]["id"]],
+        )
+        store.save_run(run)
+        run.status = RunStatus.FAILED
+        project.status = ProjectStatus.NEEDS_REVIEW
+        with sqlite3.connect(client.app.state.settings.database_path) as connection:
+            connection.execute(
+                "CREATE TRIGGER reject_project_update BEFORE UPDATE ON projects "
+                "BEGIN SELECT RAISE(ABORT, 'injected project write failure'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="injected project write failure"):
+            store.save_terminal_run_and_project(run, project)
+        assert store.get_run(run.id).status == RunStatus.QUEUED
+        assert store.get_project(project.id).status == ProjectStatus.DRAFT
+        with sqlite3.connect(client.app.state.settings.database_path) as connection:
+            connection.execute("DROP TRIGGER reject_project_update")

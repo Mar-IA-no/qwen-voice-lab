@@ -9,7 +9,7 @@ Qwen Voice Lab is a local instrument. Its default network binding is `127.0.0.1`
 - Local files are created with owner-only permissions. Git ignores `data/`, model weights, environment files and every audio asset except the reviewed starter voice.
 - A populated private archive is readable by every authenticated user of one installation. The MVP has one installation-wide token, not per-user roles; restrict tunnel, VPN or proxy access accordingly.
 - The service has no paid provider, analytics client, telemetry endpoint, or remote fallback.
-- File responses resolve under the configured voice, render, archive or project directory before being served. Long-form take assets additionally reject symlinked paths and must match their recorded SHA-256 before serving or assembly.
+- File responses resolve under the configured voice, render, archive or project directory before being served. Long-form takes additionally reject symlinked paths, are opened once with no-follow semantics, and must match their recorded SHA-256; serving and assembly consume the same authenticated byte snapshot rather than reopening a mutable path.
 - Long-form ASR and forced alignment are local-only. Validator commands are explicit operator configuration; there is no remote transcription fallback.
 
 ## GPU boundary

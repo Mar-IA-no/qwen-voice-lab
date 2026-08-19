@@ -22,6 +22,7 @@ LEGACY_HOLD_RE = re.compile(
 FORBIDDEN_LINE_RE = re.compile(r"^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|~~~)")
 LEGACY_CUES = ("**", "__", "↘", "↗", "→", "←", "^", "<break", "[T]", "[S]", "[D]", "[R]")
 INLINE_MARKDOWN_RE = re.compile(r"(?:\[[^\]]*\]|[*_`]|!\[|<[^>]+>)")
+LEGACY_SLASH_RE = re.compile(r"(?<!\S)/(?!\S)")
 
 
 def _new_id(prefix: str) -> str:
@@ -88,6 +89,7 @@ def compile_markdown(markdown: str) -> list[CompiledBlock]:
             FORBIDDEN_LINE_RE.match(value)
             or any(cue in value for cue in LEGACY_CUES)
             or INLINE_MARKDOWN_RE.search(value)
+            or LEGACY_SLASH_RE.search(value)
         ):
             raise EditorialError(
                 line_number,
@@ -226,7 +228,15 @@ def migrate_legacy_markdown(markdown: str) -> tuple[str, list[dict[str, object]]
     )
     for paragraph in paragraphs:
         line_number = paragraph[0][0]
-        value = " ".join(row for _, row in paragraph)
+        characters: list[str] = []
+        source_lines: list[int] = []
+        for index, (source_line, row) in enumerate(paragraph):
+            if index:
+                characters.append(" ")
+                source_lines.append(source_line)
+            characters.extend(row)
+            source_lines.extend([source_line] * len(row))
+        value = "".join(characters)
         if len(paragraph) > 1:
             report.append(
                 {
@@ -253,25 +263,37 @@ def migrate_legacy_markdown(markdown: str) -> tuple[str, list[dict[str, object]]
             continue
 
         converted = value
-        for cue in ("**", "__", "↘", "↗", "→", "←"):
-            if cue in converted:
-                converted = converted.replace(cue, "")
+        converted_lines = source_lines
+
+        def remove_matches(pattern: str, action: str) -> None:
+            nonlocal converted, converted_lines
+            matches = list(re.finditer(pattern, converted))
+            if not matches:
+                return
+            next_text: list[str] = []
+            next_lines: list[int] = []
+            cursor = 0
+            for match in matches:
+                next_text.append(converted[cursor : match.start()])
+                next_lines.extend(converted_lines[cursor : match.start()])
                 report.append(
-                    {"line": line_number, "from": cue, "to": "", "action": "remove-prosody-cue"}
+                    {
+                        "line": converted_lines[match.start()],
+                        "from": match.group(0),
+                        "to": "",
+                        "action": action,
+                    }
                 )
-        converted, count = re.subn(r"(?<!\*)\*(?!\*)", "", converted)
-        if count:
-            report.append({"line": line_number, "from": "*", "to": "", "action": "remove-emphasis"})
-        converted, count = re.subn(r"\[(?:T|S|D|R)\]", "", converted)
-        if count:
-            report.append(
-                {
-                    "line": line_number,
-                    "from": "function tag",
-                    "to": "",
-                    "action": "remove-prosody-cue",
-                }
-            )
+                cursor = match.end()
+            next_text.append(converted[cursor:])
+            next_lines.extend(converted_lines[cursor:])
+            converted = "".join(next_text)
+            converted_lines = next_lines
+
+        for cue in (r"\*\*", "__", "↘", "↗", "→", "←"):
+            remove_matches(cue, "remove-prosody-cue")
+        remove_matches(r"\*", "remove-emphasis")
+        remove_matches(r"\[(?:T|S|D|R)\]", "remove-prosody-cue")
 
         cursor = 0
         for match in cue_re.finditer(converted):
@@ -292,7 +314,12 @@ def migrate_legacy_markdown(markdown: str) -> tuple[str, list[dict[str, object]]
                 seconds, action = 3.0, "convert-ellipsis"
             stream.append(("pause", seconds))
             report.append(
-                {"line": line_number, "from": token, "to": f"[{seconds:g}s]", "action": action}
+                {
+                    "line": converted_lines[match.start()],
+                    "from": token,
+                    "to": f"[{seconds:g}s]",
+                    "action": action,
+                }
             )
             cursor = match.end()
         if speech := converted[cursor:].strip():

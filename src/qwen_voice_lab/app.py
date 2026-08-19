@@ -11,13 +11,13 @@ from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import __version__
 from .archive import list_archive_assets, resolve_archive_asset
-from .audio_pipeline import resolve_take_asset
+from .audio_pipeline import read_take_asset
 from .config import Settings, get_settings
 from .engine import QwenEngine, audio_info, sha256_file
 from .longform import LongFormManager
@@ -543,15 +543,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/takes/{take_id}/audio")
-    def take_audio(take_id: str, raw: bool = False) -> FileResponse:
+    def take_audio(take_id: str, raw: bool = False) -> Response:
         take = store.get_take(take_id)
         if not take:
             raise HTTPException(404, "Take not found.")
         try:
-            path = resolve_take_asset(take, settings.projects_dir, raw=raw)
+            asset, _ = read_take_asset(take, settings.projects_dir, raw=raw)
         except ValueError as exc:
             raise HTTPException(404, "Take audio is unavailable.") from exc
-        return FileResponse(path, media_type="audio/wav", content_disposition_type="inline")
+        return Response(
+            content=asset,
+            media_type="audio/wav",
+            headers={"Content-Disposition": f'inline; filename="{take.id}.wav"'},
+        )
 
     def create_assembly(project_id: str, kind: AssemblyKind, request: AssemblyRequest) -> Assembly:
         try:

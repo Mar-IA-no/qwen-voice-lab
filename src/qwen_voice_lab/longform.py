@@ -58,27 +58,36 @@ class LongFormManager:
 
     async def start(self) -> None:
         for project in self.store.list_projects():
-            interrupted = False
-            for run in self.store.list_runs(project.id):
+            interrupted_runs = []
+            runs = self.store.list_runs(project.id)
+            for run in runs:
                 if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
-                    interrupted = True
                     run.status = RunStatus.FAILED
                     run.error = "The process stopped before this run completed."
                     run.finished_at = utc_now()
-                    self.store.save_run(run)
-            if interrupted:
+                    interrupted_runs.append(run)
+            if interrupted_runs or project.status == ProjectStatus.GENERATING:
                 segments = (
                     self.store.list_segments(project.current_revision_id)
                     if project.current_revision_id
                     else []
                 )
+                latest_status = runs[0].status if runs else None
                 project.status = (
                     ProjectStatus.READY
-                    if segments and all(row.selected_take_id for row in segments)
+                    if (
+                        latest_status == RunStatus.COMPLETE
+                        and segments
+                        and all(row.selected_take_id for row in segments)
+                    )
                     else ProjectStatus.NEEDS_REVIEW
                 )
                 project.updated_at = utc_now()
-                self.store.save_project(project)
+                if interrupted_runs:
+                    for run in interrupted_runs:
+                        self.store.save_terminal_run_and_project(run, project)
+                else:
+                    self.store.save_project(project)
         self._worker = asyncio.create_task(self._run(), name="qvl-long-form-worker")
 
     async def stop(self) -> None:
@@ -316,7 +325,10 @@ class LongFormManager:
         if not revision or not voice:
             run.status = RunStatus.FAILED
             run.error = "project revision or voice is unavailable"
-            self.store.save_run(run)
+            run.finished_at = utc_now()
+            project.status = ProjectStatus.NEEDS_REVIEW
+            project.updated_at = utc_now()
+            self.store.save_terminal_run_and_project(run, project)
             return
         run.status = RunStatus.RUNNING
         run.started_at = utc_now()
@@ -460,7 +472,6 @@ class LongFormManager:
             run.error = f"{type(exc).__name__}: {exc}"
         finally:
             run.finished_at = utc_now()
-            self.store.save_run(run)
             project = self._project(project.id)
             selected = self.store.list_segments(run.revision_id)
             if run.status in {RunStatus.NEEDS_REVIEW, RunStatus.FAILED}:
@@ -470,7 +481,7 @@ class LongFormManager:
             else:
                 project.status = ProjectStatus.NEEDS_REVIEW
             project.updated_at = utc_now()
-            self.store.save_project(project)
+            self.store.save_terminal_run_and_project(run, project)
 
     async def _render_take(self, project, revision, segment, voice, attempt):
         seed = deterministic_seed(project.project_seed, segment.id, attempt)

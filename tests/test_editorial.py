@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import qwen_voice_lab.cli as editorial_cli
 from qwen_voice_lab.cli import migrate_editorial
 from qwen_voice_lab.editorial import (
     EditorialError,
@@ -36,6 +37,8 @@ def test_compiler_accepts_only_spoken_paragraphs_and_standalone_pauses() -> None
         "Speak *softly*.",
         "Read [this](https://example.test).",
         "Use `quietly`.",
+        "First /",
+        "First / next",
     ],
 )
 def test_compiler_rejects_ambiguous_or_legacy_notation(source: str) -> None:
@@ -141,6 +144,29 @@ def test_migrator_preserves_standalone_pause_without_blank_lines() -> None:
     assert blocks[0].pause_after_ms == 1000
 
 
+def test_slash_cue_requires_migration_without_rejecting_spoken_slashes() -> None:
+    for spoken in ("Visit https://example.test.", "Choose and/or continue.", "Use 1/2 cup."):
+        assert compile_markdown(spoken)[0].text == spoken
+    with pytest.raises(EditorialError):
+        compile_markdown("First /")
+    migrated, report = migrate_legacy_markdown("First /\n")
+    assert migrated == "First\n\n[0.5s]\n"
+    assert any(row.get("action") == "convert-slash" for row in report)
+
+
+def test_migration_report_preserves_cue_lines_and_repeated_occurrences() -> None:
+    _, report = migrate_legacy_markdown("Soft wrapped\ncontinued ^ then.\n\nOne **and** **two**.\n")
+    caret = next(row for row in report if row.get("action") == "convert-caret")
+    assert caret["line"] == 2
+    removals = [
+        row
+        for row in report
+        if row.get("action") == "remove-prosody-cue" and row.get("from") == "**"
+    ]
+    assert len(removals) == 4
+    assert {row["line"] for row in removals} == {4}
+
+
 def test_migration_cli_rejects_collisions_and_requires_explicit_overwrite(tmp_path) -> None:
     source = tmp_path / "source.md"
     output = tmp_path / "canonical.md"
@@ -155,3 +181,31 @@ def test_migration_cli_rejects_collisions_and_requires_explicit_overwrite(tmp_pa
     assert migrate_editorial(source, output, report, overwrite=True) == 0
     assert output.read_text(encoding="utf-8") == "Listen.\n\n[1.2s]\n"
     assert report.is_file()
+
+
+def test_migration_cli_rolls_back_pair_when_second_install_fails(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "source.md"
+    output = tmp_path / "canonical.md"
+    report = tmp_path / "report.json"
+    source.write_text("New speech. ^\n", encoding="utf-8")
+    output.write_text("Old speech.\n", encoding="utf-8")
+    report.write_text('{"generation":"old"}\n', encoding="utf-8")
+    original_replace = editorial_cli.os.replace
+    calls = 0
+
+    def fail_second_install(source_path, destination_path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected second-install failure")
+        return original_replace(source_path, destination_path)
+
+    monkeypatch.setattr(editorial_cli.os, "replace", fail_second_install)
+    with pytest.raises(OSError, match="second-install"):
+        migrate_editorial(source, output, report, overwrite=True)
+    assert output.read_text(encoding="utf-8") == "Old speech.\n"
+    assert report.read_text(encoding="utf-8") == '{"generation":"old"}\n'
+    assert list(tmp_path.glob(".canonical.md.*")) == []
+    assert list(tmp_path.glob(".report.json.*")) == []

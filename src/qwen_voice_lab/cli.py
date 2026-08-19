@@ -9,12 +9,12 @@ from pathlib import Path
 from .editorial import migrate_legacy_markdown
 
 
-def _stage_text(path: Path, content: str) -> Path:
+def _stage_bytes(path: Path, content: bytes) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     staged = Path(temporary)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -23,6 +23,10 @@ def _stage_text(path: Path, content: str) -> Path:
     except Exception:
         staged.unlink(missing_ok=True)
         raise
+
+
+def _stage_text(path: Path, content: str) -> Path:
+    return _stage_bytes(path, content.encode("utf-8"))
 
 
 def migrate_editorial(
@@ -61,8 +65,42 @@ def migrate_editorial(
     except Exception:
         staged_output.unlink(missing_ok=True)
         raise
-    os.replace(staged_output, output)
-    os.replace(staged_report, report)
+    output_backup = None
+    report_backup = None
+    output_installed = False
+    report_installed = False
+    try:
+        output_backup = _stage_bytes(output, output.read_bytes()) if output.exists() else None
+        report_backup = _stage_bytes(report, report.read_bytes()) if report.exists() else None
+        os.replace(staged_output, output)
+        output_installed = True
+        os.replace(staged_report, report)
+        report_installed = True
+    except Exception as install_error:
+        rollback_errors = []
+        for target, backup, installed in (
+            (output, output_backup, output_installed),
+            (report, report_backup, report_installed),
+        ):
+            if not installed:
+                continue
+            try:
+                if backup:
+                    os.replace(backup, target)
+                else:
+                    target.unlink(missing_ok=True)
+            except Exception as rollback_error:
+                rollback_errors.append(f"{target}: {rollback_error}")
+        if rollback_errors:
+            raise RuntimeError(
+                "migration install failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from install_error
+        raise
+    finally:
+        for temporary in (staged_output, staged_report, output_backup, report_backup):
+            if temporary:
+                temporary.unlink(missing_ok=True)
     return 0
 
 

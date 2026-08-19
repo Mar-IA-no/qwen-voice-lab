@@ -17,6 +17,7 @@ from .models import (
     ProjectRun,
     ProjectSegment,
     QualityReport,
+    RunStatus,
     SourceRevision,
     Take,
     Voice,
@@ -337,6 +338,23 @@ class Store:
                 (run.id, run.project_id, run.created_at, run.status, self._payload(run)),
             )
         return run
+
+    def save_terminal_run_and_project(self, run: ProjectRun, project: Project) -> None:
+        if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
+            raise ValueError("run must be terminal before atomic project reconciliation")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT OR REPLACE INTO project_runs"
+                "(id, project_id, created_at, status, payload) VALUES(?, ?, ?, ?, ?)",
+                (run.id, run.project_id, run.created_at, run.status, self._payload(run)),
+            )
+            connection.execute(
+                "INSERT INTO projects(id, created_at, updated_at, payload) VALUES(?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, "
+                "payload=excluded.payload",
+                (project.id, project.created_at, project.updated_at, self._payload(project)),
+            )
 
     def create_run_if_idle(self, run: ProjectRun) -> ProjectRun:
         """Atomically reject a second active run for the same project."""

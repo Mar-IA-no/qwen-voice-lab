@@ -25,10 +25,11 @@ qvl migrate-editorial old.md --output canonical.md --report migration.json
 ```
 
 The command refuses path collisions and existing outputs. Re-run with `--overwrite`
-only after inspecting the previous canonical file and transformation report; both
-replacement files are staged before they are installed.
+only after inspecting the previous canonical file and transformation report. Both
+replacement files are staged before installation, and the previous pair is restored
+if either install fails, so source and report cannot describe different generations.
 
-The migrator is best-effort. It removes known emphasis/direction glyphs and maps standalone `^` to `[1.2s]`; a human must review the result before creating a project.
+The migrator is best-effort. It removes known emphasis/direction glyphs and maps standalone `^` to `[1.2s]`; every occurrence records its actual source line in the report. A human must review the result before creating a project. Unmigrated whitespace-delimited `/` cues are rejected by the strict compiler; URLs, fractions, and embedded slashes remain ordinary speech.
 
 ## Durable pipeline
 
@@ -49,6 +50,8 @@ The identity metric is intentionally advisory until a voice/language calibration
 ## Preview and final assembly
 
 Preview is button-triggered and CPU-only. It concatenates selected trimmed takes and inserts sample-exact zero-valued pauses compiled from the current source. Raw takes are never modified. Final uses the same timeline builder, writes an immutable JSON manifest, then transcribes the full WAV to check ordered coverage and the ending. A failed or unavailable final audit needs review; approval by override requires a reason and creates a new immutable assembly.
+
+Each take is opened once with no-follow semantics and copied into an authenticated in-memory snapshot. Its SHA-256 is verified over those exact bytes, and decoding or HTTP serving consumes that same snapshot. A mutable path is never reopened after verification.
 
 Project audio lives below `data/projects/<project_id>/`. Back up the SQLite database and the complete `data/projects/` tree together; either one alone is insufficient for recovery.
 

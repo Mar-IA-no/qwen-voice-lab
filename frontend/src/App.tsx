@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { api } from './api'
+import { LatestRequest } from './latest-request'
 import type { ArchiveAsset, Assembly, AuthStatus, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, Prosody, Segment, Take, Voice } from './types'
 
 type View = 'studio' | 'projects' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
@@ -241,8 +242,10 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
   const editorDirty = useRef(false)
+  const editorVersion = useRef(0)
   const editorRevisionId = useRef<string | null>(null)
   const selectedProject = useRef('')
+  const projectLoads = useRef(new LatestRequest())
   const notifyRef = useRef(notify)
   notifyRef.current = notify
   const [draft, setDraft] = useState({
@@ -252,13 +255,15 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
   })
 
   const loadProject = useCallback(async (id: string, hydrateEditor = false) => {
+    const generation = projectLoads.current.begin()
     const [next, nextRuns, nextAssemblies] = await Promise.all([
       api.project(id), api.projectRuns(id), api.projectAssemblies(id),
     ])
+    if (!projectLoads.current.isCurrent(generation) || selectedProject.current !== id) return
     const rows = await Promise.all(next.segments.map(async (segment) => [
       segment.id, await api.projectTakes(id, segment.id),
     ] as const))
-    if (selectedProject.current !== id) return
+    if (!projectLoads.current.isCurrent(generation) || selectedProject.current !== id) return
     setDetail(next)
     const nextRevisionId = next.revision?.id ?? null
     if (hydrateEditor || (!editorDirty.current && editorRevisionId.current !== nextRevisionId)) {
@@ -331,6 +336,7 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
   const updateMarkdown = (value: string) => {
     setMarkdown(value)
     editorDirty.current = true
+    editorVersion.current += 1
   }
   const beginCreate = () => {
     setCreating(true)
@@ -370,7 +376,7 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
         <div className="panel-heading"><div><span className="kicker">REVISION {detail.revision?.number}</span><h2>{detail.title}</h2></div><StatusBadge status={detail.status === 'generating' ? 'running' : detail.status === 'ready' ? 'complete' : 'queued'} /></div>
         <EditorialInput markdown={markdown} setMarkdown={updateMarkdown} />
         <div className="project-actions">
-          <button className="soft-button" disabled={busy || activeRun || markdown === detail.revision?.markdown} onClick={() => void execute(async () => { const revised = await api.reviseProject(detail.id, markdown); editorDirty.current = false; editorRevisionId.current = revised.revision?.id ?? null; return revised }, 'Nueva revisión guardada. Los takes compatibles se conservaron.')}><Check size={16} /> Guardar revisión</button>
+          <button className="soft-button" disabled={busy || activeRun || markdown === detail.revision?.markdown} onClick={() => { const submittedMarkdown = markdown; const submittedEditorVersion = editorVersion.current; void execute(async () => { const revised = await api.reviseProject(detail.id, submittedMarkdown); projectLoads.current.invalidate(); setDetail(revised); editorRevisionId.current = revised.revision?.id ?? null; if (editorVersion.current === submittedEditorVersion) { editorDirty.current = false; setMarkdown(revised.revision?.markdown ?? submittedMarkdown) } return revised }, 'Nueva revisión guardada. Los takes compatibles se conservaron.') }}><Check size={16} /> Guardar revisión</button>
           <button className="primary-button" disabled={busy || activeRun || detail.segments.every((row) => row.selected_take_id)} onClick={() => void execute(() => api.runProject(detail.id), 'Generación por bloques encolada.')}><Sparkles size={16} /> Generar faltantes</button>
           <button className="soft-button" disabled={busy || detail.segments.some((row) => !row.selected_take_id)} onClick={() => void execute(() => api.previewProject(detail.id), 'Preview CPU creado sin invocar TTS.')}><AudioWaveform size={16} /> Preview</button>
           <button className="soft-button" disabled={busy || detail.segments.some((row) => !row.selected_take_id)} onClick={() => void execute(() => api.assembleProject(detail.id), 'Assembly final creado y auditado.')}><Download size={16} /> Final</button>
