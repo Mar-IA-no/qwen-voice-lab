@@ -287,11 +287,16 @@ class QwenEngine:
             segment_started = time.monotonic()
             render_voice = self.prosody.voice_for(voice, segment.prosody)
             prompt = self._prompt(render_voice)
+            generation = (
+                request.sampling.generation_kwargs()
+                if request.sampling is not None
+                else {"max_new_tokens": 2048}
+            )
             wavs, sample_rate = self._model.generate_voice_clone(
                 text=segment.text,
                 language=self._language(request.language),
                 voice_clone_prompt=prompt,
-                max_new_tokens=2048,
+                **generation,
             )
             if index == 0:
                 first_audio_ms = (time.monotonic() - segment_started + load_ms / 1000) * 1000

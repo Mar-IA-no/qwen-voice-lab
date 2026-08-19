@@ -19,18 +19,32 @@ from . import __version__
 from .archive import list_archive_assets, resolve_archive_asset
 from .config import Settings, get_settings
 from .engine import QwenEngine, audio_info, sha256_file
+from .longform import LongFormManager
 from .models import (
     ArchiveAsset,
+    Assembly,
+    AssemblyKind,
+    AssemblyRequest,
+    AssemblyView,
     AuthRequest,
     Capabilities,
     Comparison,
     ComparisonDetail,
     ComparisonRequest,
     DesignRequest,
+    IdentityCalibration,
+    IdentityCalibrationCreate,
     Job,
     JobView,
     Language,
+    Project,
+    ProjectCreate,
+    ProjectDetail,
+    ProjectRun,
+    RevisionCreate,
     SynthesisRequest,
+    TakeDetail,
+    TakeSelection,
     Voice,
     VoiceKind,
     VoiceView,
@@ -87,11 +101,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store = Store(settings)
     seed_starter_voices(settings, store)
     manager = JobManager(settings, store)
+    projects = LongFormManager(settings, store, manager.engine, manager.engine_lock)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await manager.start()
+        await projects.start()
         yield
+        await projects.stop()
         await manager.stop()
 
     app = FastAPI(
@@ -103,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.store = store
     app.state.manager = manager
+    app.state.projects = projects
     app.add_middleware(AccessTokenMiddleware, access_token=settings.access_token)
     app.add_middleware(
         CORSMiddleware,
@@ -123,20 +141,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         supplied = request.cookies.get("qvl_session", "")
         return {
             "required": True,
-            "authenticated": hmac.compare_digest(
-                supplied, session_digest(settings.access_token)
-            ),
+            "authenticated": hmac.compare_digest(supplied, session_digest(settings.access_token)),
         }
 
     @app.post("/api/auth/session")
     def login(payload: AuthRequest) -> JSONResponse:
-        if settings.access_token and not hmac.compare_digest(
-            payload.token, settings.access_token
-        ):
+        if settings.access_token and not hmac.compare_digest(payload.token, settings.access_token):
             raise HTTPException(401, "Invalid access token.")
-        response = JSONResponse(
-            {"required": bool(settings.access_token), "authenticated": True}
-        )
+        response = JSONResponse({"required": bool(settings.access_token), "authenticated": True})
         if settings.access_token:
             response.set_cookie(
                 "qvl_session",
@@ -207,6 +219,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpu_execution_mode=execution_mode,
             gpu_worker_state=worker_state,
             gpu_worker_reason=worker_reason,
+            local_validator_enabled=settings.validator_enabled,
+            validator_models=[settings.qwen_asr_model, settings.qwen_aligner_model],
         )
 
     @app.get("/api/archive", response_model=list[ArchiveAsset])
@@ -293,6 +307,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.voices_dir.resolve() not in path.parents or not path.is_file():
             raise HTTPException(404, "Reference audio is unavailable.")
         return FileResponse(path)
+
+    @app.get(
+        "/api/voices/{voice_id}/identity-calibrations",
+        response_model=list[IdentityCalibration],
+    )
+    def identity_calibrations(voice_id: str) -> list[IdentityCalibration]:
+        if not store.get_voice(voice_id):
+            raise HTTPException(404, "Voice not found.")
+        return store.list_identity_calibrations(voice_id)
+
+    @app.post(
+        "/api/voices/{voice_id}/identity-calibrations",
+        response_model=IdentityCalibration,
+        status_code=201,
+    )
+    def calibrate_identity(
+        voice_id: str, request: IdentityCalibrationCreate
+    ) -> IdentityCalibration:
+        if not store.get_voice(voice_id):
+            raise HTTPException(404, "Voice not found.")
+        return store.save_identity_calibration(
+            IdentityCalibration(
+                id=f"calibration_{uuid.uuid4().hex[:16]}",
+                voice_id=voice_id,
+                **request.model_dump(),
+            )
+        )
 
     @app.delete("/api/voices/{voice_id}", status_code=204)
     def delete_voice(voice_id: str) -> None:
@@ -409,6 +450,159 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/catalog/export")
     def export_catalog() -> dict:
         return store.export_catalog()
+
+    @app.get("/api/projects", response_model=list[Project])
+    def list_projects() -> list[Project]:
+        return store.list_projects()
+
+    @app.post("/api/projects", response_model=ProjectDetail, status_code=201)
+    def create_project(request: ProjectCreate) -> ProjectDetail:
+        try:
+            return projects.create_project(request)
+        except KeyError as exc:
+            raise HTTPException(404, "Voice not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}", response_model=ProjectDetail)
+    def project_detail(project_id: str) -> ProjectDetail:
+        try:
+            return projects.get_project(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+
+    @app.post("/api/projects/{project_id}/revisions", response_model=ProjectDetail, status_code=201)
+    def create_revision(project_id: str, request: RevisionCreate) -> ProjectDetail:
+        try:
+            return projects.add_revision(project_id, request)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/runs", response_model=list[ProjectRun])
+    def project_runs(project_id: str) -> list[ProjectRun]:
+        if not store.get_project(project_id):
+            raise HTTPException(404, "Project not found.")
+        return store.list_runs(project_id)
+
+    @app.post("/api/projects/{project_id}/runs", response_model=ProjectRun, status_code=202)
+    async def create_project_run(project_id: str) -> ProjectRun:
+        try:
+            return await projects.submit_run(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project or segment not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/project-runs/{run_id}", response_model=ProjectRun)
+    def project_run(run_id: str) -> ProjectRun:
+        run = store.get_run(run_id)
+        if not run:
+            raise HTTPException(404, "Project run not found.")
+        return run
+
+    @app.get(
+        "/api/projects/{project_id}/segments/{segment_id}/takes",
+        response_model=list[TakeDetail],
+    )
+    def segment_takes(project_id: str, segment_id: str) -> list[TakeDetail]:
+        try:
+            return projects.list_takes(project_id, segment_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project or segment not found.") from exc
+
+    @app.post(
+        "/api/projects/{project_id}/segments/{segment_id}/takes",
+        response_model=ProjectRun,
+        status_code=202,
+    )
+    async def generate_manual_take(project_id: str, segment_id: str) -> ProjectRun:
+        try:
+            return await projects.submit_run(
+                project_id, [segment_id], max_attempts=1, auto_select=False
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "Project or segment not found.") from exc
+
+    @app.post(
+        "/api/projects/{project_id}/segments/{segment_id}/takes/{take_id}/select",
+        response_model=ProjectDetail,
+    )
+    def select_project_take(
+        project_id: str, segment_id: str, take_id: str, selection: TakeSelection
+    ) -> ProjectDetail:
+        try:
+            return projects.select_take(project_id, segment_id, take_id, selection)
+        except KeyError as exc:
+            raise HTTPException(404, "Project, segment, or take not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/takes/{take_id}/audio")
+    def take_audio(take_id: str, raw: bool = False) -> FileResponse:
+        take = store.get_take(take_id)
+        if not take:
+            raise HTTPException(404, "Take not found.")
+        path = Path(take.raw_file if raw else take.trimmed_file).resolve()
+        if settings.projects_dir.resolve() not in path.parents or not path.is_file():
+            raise HTTPException(404, "Take audio is unavailable.")
+        return FileResponse(path, media_type="audio/wav", content_disposition_type="inline")
+
+    def create_assembly(project_id: str, kind: AssemblyKind, request: AssemblyRequest) -> Assembly:
+        try:
+            return projects.assemble(project_id, kind, request.override_reason)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/projects/{project_id}/preview", response_model=AssemblyView, status_code=201)
+    def project_preview(project_id: str, request: AssemblyRequest) -> Assembly:
+        return create_assembly(project_id, AssemblyKind.PREVIEW, request)
+
+    @app.post(
+        "/api/projects/{project_id}/assemblies",
+        response_model=AssemblyView,
+        status_code=201,
+    )
+    def project_assembly(project_id: str, request: AssemblyRequest) -> Assembly:
+        return create_assembly(project_id, AssemblyKind.FINAL, request)
+
+    @app.get("/api/projects/{project_id}/assemblies", response_model=list[AssemblyView])
+    def project_assemblies(project_id: str) -> list[Assembly]:
+        if not store.get_project(project_id):
+            raise HTTPException(404, "Project not found.")
+        return store.list_assemblies(project_id)
+
+    def assembly_asset(assembly_id: str, field: str) -> tuple[Assembly, Path]:
+        assembly = store.get_assembly(assembly_id)
+        if not assembly:
+            raise HTTPException(404, "Assembly not found.")
+        path = Path(getattr(assembly, field)).resolve()
+        if settings.projects_dir.resolve() not in path.parents or not path.is_file():
+            raise HTTPException(404, "Assembly asset is unavailable.")
+        return assembly, path
+
+    @app.get("/api/assemblies/{assembly_id}/audio")
+    def assembly_audio(assembly_id: str) -> FileResponse:
+        _, path = assembly_asset(assembly_id, "output_file")
+        return FileResponse(path, media_type="audio/wav", content_disposition_type="inline")
+
+    @app.get("/api/assemblies/{assembly_id}/download")
+    def assembly_download(assembly_id: str) -> FileResponse:
+        assembly, path = assembly_asset(assembly_id, "output_file")
+        return FileResponse(
+            path,
+            media_type="audio/wav",
+            filename=f"{assembly.project_id}-{assembly.kind}.wav",
+            content_disposition_type="attachment",
+        )
+
+    @app.get("/api/assemblies/{assembly_id}/manifest")
+    def assembly_manifest(assembly_id: str) -> FileResponse:
+        _, path = assembly_asset(assembly_id, "manifest_file")
+        return FileResponse(path, media_type="application/json")
 
     source_frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     packaged_frontend = Path(__file__).resolve().parent / "static"

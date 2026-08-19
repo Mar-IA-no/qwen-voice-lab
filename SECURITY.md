@@ -9,11 +9,14 @@ Qwen Voice Lab is a local instrument. Its default network binding is `127.0.0.1`
 - Local files are created with owner-only permissions. Git ignores `data/`, model weights, environment files and every audio asset except the reviewed starter voice.
 - A populated private archive is readable by every authenticated user of one installation. The MVP has one installation-wide token, not per-user roles; restrict tunnel, VPN or proxy access accordingly.
 - The service has no paid provider, analytics client, telemetry endpoint, or remote fallback.
-- File responses resolve under the configured voice or render directory before being served.
+- File responses resolve under the configured voice, render, archive or project directory before being served.
+- Long-form ASR and forced alignment are local-only. Validator commands are explicit operator configuration; there is no remote transcription fallback.
 
 ## GPU boundary
 
 Dedicated machines run Qwen directly and do not need an external scheduler. Shared deployments may opt into a configured launcher marker and Linux cgroup pattern before Qwen initializes. The CPU API may run as an unprivileged service account while narrowly validated commands admit and stop only the configured worker identity. Cancellation and API shutdown stop the exact transient unit before terminating its controller. [`gpu-priorityd`](https://github.com/Mar-IA-no/gpu-priorityd) is one compatible public controller. The mock engine remains available for CPU-only development.
+
+The optional Qwen3-ASR/ForcedAligner validator uses a separate Python environment and process. On shared hardware its configured command must enter the same serial admission boundary as TTS; operators must not allow both model families to claim the device concurrently.
 
 ## Deployment notes
 

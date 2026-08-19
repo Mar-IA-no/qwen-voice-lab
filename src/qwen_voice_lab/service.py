@@ -39,6 +39,7 @@ class JobManager:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.cancelled: set[str] = set()
         self._promotion_lock = threading.RLock()
+        self.engine_lock = threading.RLock()
         self._worker: asyncio.Task | None = None
         self._sweeper: asyncio.Task | None = None
 
@@ -230,7 +231,12 @@ class JobManager:
                     raise RuntimeError("voice was removed before rendering")
                 output = self.settings.renders_dir / f"{job.id}.wav"
                 metrics = await asyncio.to_thread(
-                    self.engine.render_synthesis, request, voice, output, progress, cancelled
+                    self._render_synthesis_locked,
+                    request,
+                    voice,
+                    output,
+                    progress,
+                    cancelled,
                 )
                 job.output_file = str(output.resolve())
                 job.metrics = metrics
@@ -238,7 +244,7 @@ class JobManager:
                 request = DesignRequest.model_validate(job.request)
                 output = self.settings.renders_dir / f"{job.id}.wav"
                 metrics = await asyncio.to_thread(
-                    self.engine.render_design, request, output, progress, cancelled
+                    self._render_design_locked, request, output, progress, cancelled
                 )
                 job.output_file = str(output.resolve())
                 job.metrics = metrics
@@ -259,3 +265,11 @@ class JobManager:
         finally:
             job.finished_at = utc_now()
             self.store.save_job(job)
+
+    def _render_synthesis_locked(self, request, voice, output, progress, cancelled):
+        with self.engine_lock:
+            return self.engine.render_synthesis(request, voice, output, progress, cancelled)
+
+    def _render_design_locked(self, request, output, progress, cancelled):
+        with self.engine_lock:
+            return self.engine.render_design(request, output, progress, cancelled)

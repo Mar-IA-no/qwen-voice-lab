@@ -62,3 +62,11 @@ Merged the multilingual contribution after independent review, documentation syn
 A controlled CUDA smoke used the bundled CC0 Amara Sol identity, one neutral segment per language, the same seed and semantically equivalent short texts. The six outputs measured 8.88–11.12 seconds. After the initial load, five warm renders averaged approximately 5.90 seconds of generation and RTF 0.622; peak allocated VRAM was approximately 4.7 GiB. A separate Portuguese request then completed through the persistent web queue, isolated worker and downloadable job path.
 
 These observations validate the six-language technical pipeline on the tested setup. They do not establish pronunciation quality, naturalness or cross-language identity continuity; those remain perceptual listening questions.
+
+## 2026-08-19 — Reproducible long-form production
+
+Added an additive Projects workflow while preserving ordinary synthesis jobs. Canonical editorial sources now contain only spoken paragraphs and standalone `[Ns]` pauses; legacy cues require a one-shot migration tool. Stable revisions reuse approved speech across pause-only edits.
+
+Long-form generation preserves raw and trimmed takes, deterministic per-segment seeds, resolved talker/subtalker sampling settings and technical/content/identity evidence. Automatic retries are bounded, manual takes remain unlimited, and non-passing selections require a reason. CPU previews and final WAVs share a sample-exact timeline builder; final output receives a whole-transcript audit and immutable manifest.
+
+Qwen3-ASR and ForcedAligner validation run from a separate local environment because their dependency pin conflicts with Qwen3-TTS 0.1.1. Public tests use deterministic mock evidence; private CUDA and perceptual acceptance remain deployment responsibilities.

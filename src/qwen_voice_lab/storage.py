@@ -8,7 +8,20 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from .config import Settings
-from .models import Comparison, Job, Voice, VoiceView
+from .models import (
+    Assembly,
+    Comparison,
+    IdentityCalibration,
+    Job,
+    Project,
+    ProjectRun,
+    ProjectSegment,
+    QualityReport,
+    SourceRevision,
+    Take,
+    Voice,
+    VoiceView,
+)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -45,6 +58,80 @@ class Store:
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS source_revisions (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    number INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    UNIQUE(project_id, number),
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS project_segments (
+                    revision_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY(revision_id, id),
+                    UNIQUE(revision_id, position),
+                    FOREIGN KEY(revision_id) REFERENCES source_revisions(id) ON DELETE CASCADE,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS project_runs (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS takes (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    segment_id TEXT NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    UNIQUE(revision_id, segment_id, attempt),
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS quality_reports (
+                    id TEXT PRIMARY KEY,
+                    take_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY(take_id) REFERENCES takes(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS assemblies (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS identity_calibrations (
+                    id TEXT PRIMARY KEY,
+                    voice_id TEXT NOT NULL,
+                    language TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    UNIQUE(voice_id, language),
+                    FOREIGN KEY(voice_id) REFERENCES voices(id) ON DELETE CASCADE
+                );
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES(1);
                 """
             )
 
@@ -55,7 +142,8 @@ class Store:
     def save_voice(self, voice: Voice) -> Voice:
         with self._lock, self._connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO voices(id, created_at, payload) VALUES(?, ?, ?)",
+                "INSERT INTO voices(id, created_at, payload) VALUES(?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
                 (voice.id, voice.created_at, self._payload(voice)),
             )
         return voice
@@ -122,3 +210,236 @@ class Store:
             ],
             "comparisons": [],
         }
+
+    def save_project(self, project: Project) -> Project:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO projects(id, created_at, updated_at, payload) VALUES(?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, "
+                "payload=excluded.payload",
+                (project.id, project.created_at, project.updated_at, self._payload(project)),
+            )
+        return project
+
+    def get_project(self, project_id: str) -> Project | None:
+        return self._get_payload("projects", project_id, Project)
+
+    def list_projects(self) -> list[Project]:
+        return self._list_payloads("projects", Project, "updated_at DESC")
+
+    def save_revision(self, revision: SourceRevision) -> SourceRevision:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO source_revisions"
+                "(id, project_id, number, created_at, payload) VALUES(?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+                (
+                    revision.id,
+                    revision.project_id,
+                    revision.number,
+                    revision.created_at,
+                    self._payload(revision),
+                ),
+            )
+        return revision
+
+    def get_revision(self, revision_id: str) -> SourceRevision | None:
+        return self._get_payload("source_revisions", revision_id, SourceRevision)
+
+    def list_revisions(self, project_id: str) -> list[SourceRevision]:
+        return self._query_payloads(
+            "SELECT payload FROM source_revisions WHERE project_id = ? ORDER BY number DESC",
+            (project_id,),
+            SourceRevision,
+        )
+
+    def save_segments(self, revision_id: str, segments: list[ProjectSegment]) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM project_segments WHERE revision_id = ?", (revision_id,))
+            connection.executemany(
+                "INSERT INTO project_segments(revision_id, id, project_id, position, payload) "
+                "VALUES(?, ?, ?, ?, ?)",
+                [
+                    (revision_id, row.id, row.project_id, row.position, self._payload(row))
+                    for row in segments
+                ],
+            )
+
+    def save_segment(self, segment: ProjectSegment) -> ProjectSegment:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO project_segments"
+                "(revision_id, id, project_id, position, payload) VALUES(?, ?, ?, ?, ?) "
+                "ON CONFLICT(revision_id, id) DO UPDATE SET position=excluded.position, "
+                "payload=excluded.payload",
+                (
+                    segment.revision_id,
+                    segment.id,
+                    segment.project_id,
+                    segment.position,
+                    self._payload(segment),
+                ),
+            )
+        return segment
+
+    def list_segments(self, revision_id: str) -> list[ProjectSegment]:
+        return self._query_payloads(
+            "SELECT payload FROM project_segments WHERE revision_id = ? ORDER BY position",
+            (revision_id,),
+            ProjectSegment,
+        )
+
+    def get_segment(self, revision_id: str, segment_id: str) -> ProjectSegment | None:
+        rows = self._query_payloads(
+            "SELECT payload FROM project_segments WHERE revision_id = ? AND id = ?",
+            (revision_id, segment_id),
+            ProjectSegment,
+        )
+        return rows[0] if rows else None
+
+    def save_run(self, run: ProjectRun) -> ProjectRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO project_runs"
+                "(id, project_id, created_at, status, payload) VALUES(?, ?, ?, ?, ?)",
+                (run.id, run.project_id, run.created_at, run.status, self._payload(run)),
+            )
+        return run
+
+    def get_run(self, run_id: str) -> ProjectRun | None:
+        return self._get_payload("project_runs", run_id, ProjectRun)
+
+    def list_runs(self, project_id: str) -> list[ProjectRun]:
+        return self._query_payloads(
+            "SELECT payload FROM project_runs WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+            ProjectRun,
+        )
+
+    def save_take(self, take: Take) -> Take:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO takes"
+                "(id, project_id, revision_id, segment_id, attempt, created_at, payload) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+                (
+                    take.id,
+                    take.project_id,
+                    take.revision_id,
+                    take.segment_id,
+                    take.attempt,
+                    take.created_at,
+                    self._payload(take),
+                ),
+            )
+        return take
+
+    def get_take(self, take_id: str) -> Take | None:
+        return self._get_payload("takes", take_id, Take)
+
+    def list_takes(self, revision_id: str, segment_id: str | None = None) -> list[Take]:
+        if segment_id:
+            return self._query_payloads(
+                "SELECT payload FROM takes WHERE revision_id = ? AND segment_id = ? "
+                "ORDER BY attempt DESC",
+                (revision_id, segment_id),
+                Take,
+            )
+        return self._query_payloads(
+            "SELECT payload FROM takes WHERE revision_id = ? ORDER BY segment_id, attempt DESC",
+            (revision_id,),
+            Take,
+        )
+
+    def save_quality_report(self, report: QualityReport) -> QualityReport:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO quality_reports(id, take_id, created_at, payload) "
+                "VALUES(?, ?, ?, ?)",
+                (report.id, report.take_id, report.created_at, self._payload(report)),
+            )
+        return report
+
+    def list_quality_reports(self, take_id: str) -> list[QualityReport]:
+        return self._query_payloads(
+            "SELECT payload FROM quality_reports WHERE take_id = ? ORDER BY created_at",
+            (take_id,),
+            QualityReport,
+        )
+
+    def save_assembly(self, assembly: Assembly) -> Assembly:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO assemblies"
+                "(id, project_id, revision_id, created_at, payload) VALUES(?, ?, ?, ?, ?)",
+                (
+                    assembly.id,
+                    assembly.project_id,
+                    assembly.revision_id,
+                    assembly.created_at,
+                    self._payload(assembly),
+                ),
+            )
+        return assembly
+
+    def save_identity_calibration(
+        self, calibration: IdentityCalibration
+    ) -> IdentityCalibration:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT INTO identity_calibrations"
+                "(id, voice_id, language, created_at, payload) VALUES(?, ?, ?, ?, ?) "
+                "ON CONFLICT(voice_id, language) DO UPDATE SET id=excluded.id, "
+                "created_at=excluded.created_at, payload=excluded.payload",
+                (
+                    calibration.id,
+                    calibration.voice_id,
+                    calibration.language,
+                    calibration.created_at,
+                    self._payload(calibration),
+                ),
+            )
+        return calibration
+
+    def get_identity_calibration(
+        self, voice_id: str, language: str
+    ) -> IdentityCalibration | None:
+        rows = self._query_payloads(
+            "SELECT payload FROM identity_calibrations WHERE voice_id = ? AND language = ?",
+            (voice_id, language),
+            IdentityCalibration,
+        )
+        return rows[0] if rows else None
+
+    def list_identity_calibrations(self, voice_id: str) -> list[IdentityCalibration]:
+        return self._query_payloads(
+            "SELECT payload FROM identity_calibrations WHERE voice_id = ? ORDER BY language",
+            (voice_id,),
+            IdentityCalibration,
+        )
+
+    def get_assembly(self, assembly_id: str) -> Assembly | None:
+        return self._get_payload("assemblies", assembly_id, Assembly)
+
+    def list_assemblies(self, project_id: str) -> list[Assembly]:
+        return self._query_payloads(
+            "SELECT payload FROM assemblies WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+            Assembly,
+        )
+
+    def _get_payload(self, table: str, row_id: str, model: type[ModelT]) -> ModelT | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT payload FROM {table} WHERE id = ?", (row_id,)
+            ).fetchone()
+        return model.model_validate_json(row[0]) if row else None
+
+    def _list_payloads(self, table: str, model: type[ModelT], order_by: str) -> list[ModelT]:
+        return self._query_payloads(f"SELECT payload FROM {table} ORDER BY {order_by}", (), model)
+
+    def _query_payloads(self, query: str, parameters: tuple, model: type[ModelT]) -> list[ModelT]:
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [model.model_validate_json(row[0]) for row in rows]
