@@ -169,23 +169,44 @@ export interface QualityReport {
   validator: string
   verdict: 'pass' | 'retry' | 'review' | 'unavailable'
   transcript: string
+  normalized_transcript: string
   wer?: number | null
   cer?: number | null
   token_coverage?: number | null
   prefix_coverage?: number | null
   suffix_coverage?: number | null
+  block_coverages: number[]
+  missing_block_indexes: number[]
+  leaked_reference_phrases: string[]
   identity_median?: number | null
   identity_min?: number | null
+  identity_windows: number[]
+  calibration_id?: string | null
+  validator_model_sha256?: string | null
+  alignment: Array<Record<string, unknown>>
   reasons: string[]
 }
 
 export interface Take {
   id: string
+  project_id: string
+  revision_id: string
   segment_id: string
   attempt: number
   seed: number
   status: 'generated' | 'pass' | 'retry' | 'needs_review' | 'overridden'
   duration_seconds: number
+  raw_sha256: string
+  trimmed_sha256: string
+  trim_start_ms: number
+  trim_end_ms: number
+  trim_threshold_db: number
+  trim_padding_ms: number
+  voice_id: string
+  voice_reference_sha256: string
+  model: string
+  text_sha256: string
+  sampling: SamplingSettings
   selected: boolean
   override_reason?: string | null
   quality_reports: QualityReport[]

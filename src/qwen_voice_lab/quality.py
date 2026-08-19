@@ -10,10 +10,12 @@ import threading
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+from rapidfuzz.distance import Levenshtein
 
 from .config import Settings
 from .editorial import normalize_spoken_text
@@ -37,20 +39,18 @@ class ValidationResult:
     identity: QualityReport | None = None
 
 
+@dataclass(frozen=True)
+class ValidationItem:
+    audio: Path
+    expected: str
+    language: Language
+    reference: Path | None = None
+    reference_text: str = ""
+    expected_blocks: tuple[str, ...] = ()
+
+
 def _distance(reference: Sequence[str], hypothesis: Sequence[str]) -> int:
-    previous = list(range(len(hypothesis) + 1))
-    for index, expected in enumerate(reference, start=1):
-        current = [index]
-        for offset, actual in enumerate(hypothesis, start=1):
-            current.append(
-                min(
-                    current[-1] + 1,
-                    previous[offset] + 1,
-                    previous[offset - 1] + (expected != actual),
-                )
-            )
-        previous = current
-    return previous[-1]
+    return int(Levenshtein.distance(reference, hypothesis))
 
 
 def content_metrics(expected: str, transcript: str) -> dict[str, float]:
@@ -78,6 +78,68 @@ def content_metrics(expected: str, transcript: str) -> dict[str, float]:
         "prefix_coverage": max(0.0, prefix),
         "suffix_coverage": max(0.0, suffix),
     }
+
+
+def ordered_block_coverages(expected_blocks: Sequence[str], transcript: str) -> list[float]:
+    """Measure exact-token coverage for every block under one monotonic alignment.
+
+    A global WER can hide a short missing or reordered block inside a long narration.
+    SequenceMatcher supplies a monotonic word alignment; inspecting each source block
+    independently makes those local failures visible without requiring ASR paragraph
+    boundaries.
+    """
+
+    normalized_blocks = [normalize_spoken_text(block).split() for block in expected_blocks]
+    expected_words = [word for block in normalized_blocks for word in block]
+    actual_words = normalize_spoken_text(transcript).split()
+    matched = [False] * len(expected_words)
+    # Exact matching is preferable for normal projects, but disabling difflib's
+    # popular-token heuristic is quadratic on long, repetitive manuscripts.
+    # At that scale the heuristic preserves the monotonic/block gate while
+    # keeping a 100k-character API request from becoming a CPU denial of service.
+    matcher = SequenceMatcher(
+        None,
+        expected_words,
+        actual_words,
+        autojunk=len(expected_words) > 2_000 or len(actual_words) > 2_000,
+    )
+    for expected_start, _, size in matcher.get_matching_blocks():
+        for index in range(expected_start, expected_start + size):
+            if index < len(matched):
+                matched[index] = True
+    result = []
+    cursor = 0
+    for block in normalized_blocks:
+        size = len(block)
+        result.append(sum(matched[cursor : cursor + size]) / max(1, size))
+        cursor += size
+    return result
+
+
+def reference_leakage_phrases(expected: str, transcript: str, reference_text: str) -> list[str]:
+    """Return reference-only phrases reproduced in the generated transcript."""
+
+    reference = normalize_spoken_text(reference_text).split()
+    actual = normalize_spoken_text(transcript).split()
+    expected_words = normalize_spoken_text(expected).split()
+    if len(reference) < 3 or len(actual) < 3:
+        return []
+    expected_ngrams = {
+        tuple(expected_words[index : index + 3])
+        for index in range(max(0, len(expected_words) - 2))
+    }
+    reference_ngrams = {
+        tuple(reference[index : index + 3])
+        for index in range(len(reference) - 2)
+    }
+    leaked = []
+    for index in range(len(actual) - 2):
+        phrase = tuple(actual[index : index + 3])
+        if phrase in reference_ngrams and phrase not in expected_ngrams:
+            rendered = " ".join(phrase)
+            if rendered not in leaked:
+                leaked.append(rendered)
+    return leaked[:5]
 
 
 def _spectral_embedding(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -128,8 +190,7 @@ class ContentValidator:
             return
         self._terminate(process)
 
-    @staticmethod
-    def _terminate(process: subprocess.Popen[str]) -> None:
+    def _terminate(self, process: subprocess.Popen[str]) -> None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=3)
@@ -143,15 +204,44 @@ class ContentValidator:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     pass
+        if self.settings.validator_stop_command.strip():
+            result = subprocess.run(
+                shlex.split(self.settings.validator_stop_command),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+                raise RuntimeError(f"validator GPU cleanup failed: {detail}")
 
     def validate(
-        self, audio: Path, expected: str, language: Language, *, mock: bool = False
+        self,
+        audio: Path,
+        expected: str,
+        language: Language,
+        *,
+        reference_text: str = "",
+        expected_blocks: Sequence[str] = (),
+        mock: bool = False,
     ) -> QualityReport:
-        return self.validate_batch([(audio, expected, language, None)], mock=mock)[0].content
+        return self.validate_batch(
+            [
+                ValidationItem(
+                    audio=audio,
+                    expected=expected,
+                    language=language,
+                    reference_text=reference_text,
+                    expected_blocks=tuple(expected_blocks),
+                )
+            ],
+            mock=mock,
+        )[0].content
 
     def validate_batch(
         self,
-        items: list[tuple[Path, str, Language, Path | None]],
+        items: list[ValidationItem],
         *,
         mock: bool = False,
     ) -> list[ValidationResult]:
@@ -159,15 +249,17 @@ class ContentValidator:
             payloads = [
                 {
                     "validator": "mock-content-oracle-v1",
-                    "transcript": expected,
+                    "transcript": item.expected,
                     "alignment": [],
                     "identity_validator": MOCK_IDENTITY_VALIDATOR,
                     "identity_model_sha256": MOCK_IDENTITY_MODEL_SHA256,
                     "identity_scores": (
-                        identity_scores(reference, audio) if reference is not None else []
+                        identity_scores(item.reference, item.audio)
+                        if item.reference is not None
+                        else []
                     ),
                 }
-                for audio, expected, _, reference in items
+                for item in items
             ]
         elif not self.settings.validator_enabled:
             return [
@@ -187,21 +279,34 @@ class ContentValidator:
                             verdict="unavailable",
                             reasons=["local validator is disabled"],
                         )
-                        if reference is not None
+                        if item.reference is not None
                         else None
                     ),
                 )
-                for _, _, _, reference in items
+                for item in items
             ]
         else:
             payloads = self._invoke_batch(items)
         return [
-            self._report(expected, payload, reference is not None)
-            for (_, expected, _, reference), payload in zip(items, payloads, strict=True)
+            self._report(
+                item.expected,
+                payload,
+                item.reference is not None,
+                reference_text=item.reference_text,
+                expected_blocks=item.expected_blocks,
+            )
+            for item, payload in zip(items, payloads, strict=True)
         ]
 
     @staticmethod
-    def _report(expected: str, payload: dict, identity_expected: bool) -> ValidationResult:
+    def _report(
+        expected: str,
+        payload: dict,
+        identity_expected: bool,
+        *,
+        reference_text: str = "",
+        expected_blocks: Sequence[str] = (),
+    ) -> ValidationResult:
         transcript = str(payload.get("transcript", ""))
         metrics = content_metrics(expected, transcript)
         reasons = []
@@ -219,6 +324,17 @@ class ContentValidator:
             aligned_suffix = content_metrics(expected, aligned_text)["suffix_coverage"]
             if aligned_suffix < 0.8:
                 reasons.append("forced-alignment endpoint does not contain the expected ending")
+        block_coverages = ordered_block_coverages(expected_blocks, transcript)
+        missing_block_indexes = [
+            index for index, coverage in enumerate(block_coverages) if coverage < 0.8
+        ]
+        for index in missing_block_indexes:
+            reasons.append(
+                f"spoken block {index + 1} coverage {block_coverages[index]:.3f} is below 0.800"
+            )
+        leaked_phrases = reference_leakage_phrases(expected, transcript, reference_text)
+        if leaked_phrases:
+            reasons.append("reference-only phrase leaked into generated speech")
         content = QualityReport(
             id=f"qc_{uuid.uuid4().hex[:16]}",
             take_id="pending",
@@ -227,6 +343,9 @@ class ContentValidator:
             transcript=transcript,
             normalized_transcript=normalize_spoken_text(transcript),
             alignment=alignment,
+            block_coverages=block_coverages,
+            missing_block_indexes=missing_block_indexes,
+            leaked_reference_phrases=leaked_phrases,
             reasons=reasons,
             **metrics,
         )
@@ -247,7 +366,7 @@ class ContentValidator:
             )
         return ValidationResult(content=content, identity=identity)
 
-    def _invoke_batch(self, items: list[tuple[Path, str, Language, Path | None]]) -> list[dict]:
+    def _invoke_batch(self, items: list[ValidationItem]) -> list[dict]:
         command = shlex.split(self.settings.validator_command)
         if not command:
             raise RuntimeError("validator command is not configured")
@@ -260,12 +379,12 @@ class ContentValidator:
                 "device": self.settings.validator_device,
                 "items": [
                     {
-                        "audio": str(audio.resolve()),
-                        "text": expected,
-                        "language": LANGUAGE_NAMES[language],
-                        "reference": str(reference.resolve()) if reference else None,
+                        "audio": str(item.audio.resolve()),
+                        "text": item.expected,
+                        "language": LANGUAGE_NAMES[item.language],
+                        "reference": str(item.reference.resolve()) if item.reference else None,
                     }
-                    for audio, expected, language, reference in items
+                    for item in items
                 ],
             }
         )

@@ -546,8 +546,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
-    @app.get("/api/takes/{take_id}/audio")
-    def take_audio(take_id: str, raw: bool = False) -> Response:
+    def take_response(take_id: str, raw: bool, *, attachment: bool) -> Response:
         take = store.get_take(take_id)
         if not take:
             raise HTTPException(404, "Take not found.")
@@ -558,8 +557,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             content=asset,
             media_type="audio/wav",
-            headers={"Content-Disposition": f'inline; filename="{take.id}.wav"'},
+            headers={
+                "Content-Disposition": (
+                    f'{"attachment" if attachment else "inline"}; '
+                    f'filename="{take.id}{"-raw" if raw else ""}.wav"'
+                )
+            },
         )
+
+    @app.get("/api/takes/{take_id}/audio")
+    def take_audio(take_id: str, raw: bool = False) -> Response:
+        return take_response(take_id, raw, attachment=False)
+
+    @app.get("/api/takes/{take_id}/download")
+    def take_download(take_id: str, raw: bool = False) -> Response:
+        return take_response(take_id, raw, attachment=True)
 
     def create_assembly(project_id: str, kind: AssemblyKind, request: AssemblyRequest) -> Assembly:
         try:

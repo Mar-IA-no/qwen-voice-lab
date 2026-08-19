@@ -42,6 +42,7 @@ class JobManager:
         self.engine_lock = threading.RLock()
         self._worker: asyncio.Task | None = None
         self._sweeper: asyncio.Task | None = None
+        self._active_job_id: str | None = None
 
     async def start(self) -> None:
         for job in self.store.list_jobs(500):
@@ -54,8 +55,15 @@ class JobManager:
         self._sweeper = asyncio.create_task(self._sweep_idle_model(), name="qvl-model-sweeper")
 
     async def stop(self) -> None:
+        cleanup_error: Exception | None = None
         if self._worker:
+            had_active_job = self._active_job_id is not None
             self._worker.cancel()
+            if had_active_job and (cancel_active := getattr(self.engine, "cancel_active", None)):
+                try:
+                    await asyncio.to_thread(cancel_active)
+                except Exception as exc:
+                    cleanup_error = exc
             try:
                 await self._worker
             except asyncio.CancelledError:
@@ -66,7 +74,11 @@ class JobManager:
                 await self._sweeper
             except asyncio.CancelledError:
                 pass
-        await asyncio.to_thread(self._unload_locked)
+        try:
+            await asyncio.to_thread(self._unload_locked)
+        finally:
+            if cleanup_error:
+                raise RuntimeError("active GPU worker cleanup failed") from cleanup_error
 
     async def submit_synthesis(self, request: SynthesisRequest) -> Job:
         voice = self.store.get_voice(request.voice_id)
@@ -193,9 +205,11 @@ class JobManager:
     async def _run(self) -> None:
         while True:
             job_id = await self.queue.get()
+            self._active_job_id = job_id
             try:
                 await self._execute(job_id)
             finally:
+                self._active_job_id = None
                 self.queue.task_done()
 
     async def _sweep_idle_model(self) -> None:
@@ -250,6 +264,10 @@ class JobManager:
                 raise RenderCancelled("render cancelled")
             job.status = JobStatus.COMPLETE
             job.progress = 1
+        except asyncio.CancelledError:
+            job.status = JobStatus.FAILED
+            job.error = "The process stopped before this job completed."
+            raise
         except RenderCancelled:
             job.status = JobStatus.CANCELLED
             job.error = None

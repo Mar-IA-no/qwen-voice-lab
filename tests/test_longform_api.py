@@ -97,6 +97,8 @@ def test_project_pipeline_persists_takes_qc_exact_pauses_and_final_audit(
         assert "trimmed_file" not in takes[0]
         assert takes[0]["seed"] == deterministic_seed(17, first["id"], 1)
         assert takes[0]["sampling"]["temperature"] == 0.7
+        assert takes[0]["trim_threshold_db"] == -48
+        assert takes[0]["trim_padding_ms"] == 80
         assert {row["validator"] for row in takes[0]["quality_reports"]} == {
             "technical-audio-v1",
             "mock-content-oracle-v1",
@@ -104,6 +106,11 @@ def test_project_pipeline_persists_takes_qc_exact_pauses_and_final_audit(
         }
         assert client.get(f"/api/takes/{takes[0]['id']}/audio").status_code == 200
         assert client.get(f"/api/takes/{takes[0]['id']}/audio?raw=true").status_code == 200
+        download = client.get(f"/api/takes/{takes[0]['id']}/download")
+        assert download.status_code == 200
+        assert download.headers["content-disposition"].startswith("attachment;")
+        raw_download = client.get(f"/api/takes/{takes[0]['id']}/download?raw=true")
+        assert "-raw.wav" in raw_download.headers["content-disposition"]
 
         preview = client.post(f"/api/projects/{project['id']}/preview", json={}).json()
         assert preview["kind"] == "preview"
@@ -220,11 +227,11 @@ def test_retry_orchestration_uses_generation_and_validation_waves(tmp_path: Path
                         take_id="pending",
                         validator="fake-asr",
                         verdict=verdict,
-                        transcript=expected if verdict == "pass" else "missing",
+                        transcript=item.expected if verdict == "pass" else "missing",
                         reasons=[] if verdict == "pass" else ["missing content"],
                     )
                 )
-                for index, (_, expected, _, _) in enumerate(items)
+                for index, item in enumerate(items)
             ]
 
         client.app.state.projects.validator.validate_batch = fake_batch

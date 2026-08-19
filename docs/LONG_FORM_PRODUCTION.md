@@ -39,7 +39,7 @@ Saving a revision and creating a run are mutually exclusive inside SQLite. A que
 
 For every generated take the Lab records:
 
-- raw and non-destructively trimmed WAVs plus SHA-256;
+- raw and non-destructively trimmed WAVs plus SHA-256, threshold and padding used;
 - voice/reference/text/model provenance;
 - a seed derived from `SHA-256(project seed, stable segment ID, attempt)` and reset before inference;
 - resolved talker and subtalker sampling controls;
@@ -47,7 +47,7 @@ For every generated take the Lab records:
 
 Automatic generation stops after three attempts by default. A passing take is selected automatically; an exhausted, unavailable, or ambiguous result becomes `needs_review`. Manual takes have no display ceiling. Selecting a non-passing take requires a durable reason.
 
-The identity metric is intentionally advisory until a voice/language calibration exists for the exact scorer and frozen model SHA-256. It can expose a register jump through per-window scores, but an uncalibrated or provenance-mismatched number is not a valid rejection threshold. An operator can register evidence-backed median/minimum thresholds with `POST /api/voices/{voice_id}/identity-calibrations`; `validator`, `validator_model_sha256`, and a nonblank notes field are required. Only an exact provenance match can make identity outliers trigger retries.
+The identity metric is intentionally advisory until a voice/language calibration exists for the exact scorer and frozen model SHA-256. The Projects dashboard exposes the transcript, content metrics, block coverage, identity median/minimum and every window score so an internal register jump is reviewable. An uncalibrated or provenance-mismatched number is not a valid rejection threshold. An operator can register evidence-backed median/minimum thresholds with `POST /api/voices/{voice_id}/identity-calibrations`; `validator`, `validator_model_sha256`, and a nonblank notes field are required. Only an exact provenance match can make identity outliers trigger retries.
 
 ## Preview and final assembly
 
@@ -71,6 +71,7 @@ Then configure an installation-specific GPU admission command. A dedicated-GPU e
 ```dotenv
 QVL_VALIDATOR_ENABLED=true
 QVL_VALIDATOR_COMMAND=/absolute/repo/validator/.venv/bin/python /absolute/repo/validator/worker.py
+QVL_VALIDATOR_STOP_COMMAND=
 QVL_QWEN_ASR_MODEL=/absolute/models/Qwen3-ASR-0.6B
 QVL_QWEN_ALIGNER_MODEL=/absolute/models/Qwen3-ForcedAligner-0.6B
 QVL_VALIDATOR_SPEAKER_MODEL=/absolute/models/spkrec-ecapa-voxceleb
@@ -78,15 +79,15 @@ QVL_VALIDATOR_SPEAKER_MODEL_SHA256=<lowercase SHA-256 of the frozen speaker mode
 QVL_VALIDATOR_DEVICE=cuda:0
 ```
 
-On a shared GPU, `QVL_VALIDATOR_COMMAND` must use the same operator-controlled serial admission policy as TTS. The configured `QVL_VALIDATOR_DEVICE` is sent to both ASR and ForcedAligner (and defaults to `QVL_DEVICE`); it is never hard-coded by the worker. The worker uses the official `Qwen3ASRModel.from_pretrained(..., forced_aligner=...)` and `transcribe(..., return_time_stamps=True)` API. A local SpeechBrain ECAPA model produces reference-vs-take speaker scores over overlapping voiced windows on CPU. Scores remain advisory until calibrated for the exact voice/language/scorer/model hash. Audio remains local. The server refuses to enable validation without explicit worker and speaker-model provenance.
+On a shared GPU, `QVL_VALIDATOR_COMMAND` must use the same operator-controlled serial admission policy as TTS. Configure `QVL_VALIDATOR_STOP_COMMAND` when that admission process creates a detached unit, so timeout and API shutdown release the validator scope as well as its controller. The configured `QVL_VALIDATOR_DEVICE` is sent to both ASR and ForcedAligner (and defaults to `QVL_DEVICE`); it is never hard-coded by the worker. The worker uses the official `Qwen3ASRModel.from_pretrained(..., forced_aligner=...)` and `transcribe(..., return_time_stamps=True)` API. A local SpeechBrain ECAPA model produces reference-vs-take speaker scores over overlapping voiced windows on CPU. Scores remain advisory until calibrated for the exact voice/language/scorer/model hash. Audio remains local. The server refuses to enable validation without explicit worker and speaker-model provenance.
 
-The current content gate retries when WER exceeds 0.12, token coverage is below 0.90, or prefix/suffix coverage is below 0.80. These are operational defaults, not universal perceptual truth; changes require regression evidence.
+The current content gate retries when WER exceeds 0.12, token coverage is below 0.90, prefix/suffix coverage is below 0.80, or any canonical spoken block has less than 0.80 exact-token coverage under one monotonic alignment. Block-local coverage prevents a short missing or reordered paragraph from disappearing inside an acceptable global WER. A three-word phrase copied from the voice reference but absent from the requested text is also retryable reference leakage. These are operational defaults, not universal perceptual truth; changes require regression evidence.
 
 ## API sequence
 
 1. `POST /api/projects` with canonical Markdown and project metadata.
 2. `POST /api/projects/{id}/runs`; poll `GET /api/project-runs/{run_id}`.
-3. Review `GET /api/projects/{id}/segments/{segment_id}/takes`.
+3. Review `GET /api/projects/{id}/segments/{segment_id}/takes`; download the authenticated trimmed or raw take from `/api/takes/{take_id}/download[?raw=true]`.
 4. Generate another take or select one; non-passing selection supplies `{ "override": true, "reason": "..." }`.
 5. Edit pauses by saving a new source revision.
 6. `POST /api/projects/{id}/preview` for CPU preview.
@@ -96,3 +97,5 @@ The current content gate retries when WER exceeds 0.12, token coverage is below 
 ## Deployment acceptance
 
 The CUDA gate must use private, authorized assets outside Git and record model hashes, Git commit, settings, and output manifests. It includes all six advertised languages and the known Italian regression: the block containing “Senti delle voci?” must not jump identity or omit its following block, and the final expected words must be present. No CUDA smoke result is embedded in the public repository.
+
+`scripts/run_private_longform_acceptance.py` exercises that technical gate against a live installation and writes WAVs, manifests, ASR/identity evidence and hashes only to the explicitly supplied non-Git directory. Its report intentionally leaves `human_listening_review` pending: a human listener, not the script, owns perceptual acceptance.

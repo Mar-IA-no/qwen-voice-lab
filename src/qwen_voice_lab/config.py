@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     gpu_stop_command: str = ""
     gpu_stop_all_command: str = ""
     validator_command: str = ""
+    validator_stop_command: str = ""
     validator_enabled: bool = False
     validator_speaker_model: str = ""
     validator_speaker_model_sha256: str = ""

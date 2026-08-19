@@ -33,7 +33,7 @@ from .models import (
     TakeStatus,
     utc_now,
 )
-from .quality import ContentValidator, ValidationResult
+from .quality import ContentValidator, ValidationItem, ValidationResult
 from .storage import Store
 
 
@@ -304,12 +304,15 @@ class LongFormManager:
         audit = {}
         if kind == AssemblyKind.FINAL:
             expected = " ".join(row.text for row in detail.segments)
+            voice = self.store.get_voice(detail.voice_id)
             try:
                 with self.engine_lock:
                     report = self.validator.validate(
                         output,
                         expected,
                         detail.language,
+                        reference_text=voice.reference_text if voice else "",
+                        expected_blocks=[row.text for row in detail.segments],
                         mock=self.settings.engine == "mock",
                     )
                 audit = report.model_dump(mode="json", exclude={"take_id"})
@@ -393,11 +396,13 @@ class LongFormManager:
                     reports = await asyncio.to_thread(
                         self._validate_batch_locked,
                         [
-                            (
-                                Path(take.trimmed_file),
-                                segment.text,
-                                project.language,
-                                Path(voice.reference_file),
+                            ValidationItem(
+                                audio=Path(take.trimmed_file),
+                                expected=segment.text,
+                                language=project.language,
+                                reference=Path(voice.reference_file),
+                                reference_text=voice.reference_text,
+                                expected_blocks=(segment.text,),
                             )
                             for segment, take, _ in generated
                         ],
@@ -561,6 +566,8 @@ class LongFormManager:
             duration_seconds=duration,
             trim_start_ms=trim_start,
             trim_end_ms=trim_end,
+            trim_threshold_db=self.settings.trim_threshold_db,
+            trim_padding_ms=self.settings.trim_padding_ms,
             voice_id=voice.id,
             voice_reference_sha256=voice.reference_sha256,
             model=metrics.model,

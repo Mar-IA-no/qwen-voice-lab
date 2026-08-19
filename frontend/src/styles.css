@@ -149,6 +149,8 @@ input::placeholder, textarea::placeholder { color: #55606a; }
 .sampling-details { padding: 12px; border: 1px solid var(--line-soft); border-radius: 10px; color: var(--muted); font-size: 10px; }
 .sampling-details summary { color: #aeb7bf; cursor: pointer; }
 .sampling-details .field-grid { margin-top: 12px; }
+.sampling-details .check-field { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.sampling-details .check-field input { width: auto; }
 .editorial-input textarea { font: 11px/1.65 ui-monospace, SFMono-Regular, monospace; }
 .editorial-input > small { display: flex; align-items: center; justify-content: space-between; }
 .file-inline { position: relative; overflow: hidden; color: var(--gold-bright); cursor: pointer; }
@@ -173,6 +175,17 @@ input::placeholder, textarea::placeholder { color: #55606a; }
 .qc-chips span { padding: 3px 6px; border-radius: 99px; color: var(--muted); background: #242b32; font-size: 7px; }
 .qc-chips .pass { color: var(--green); background: rgba(104,213,161,.08); }
 .qc-chips .retry, .qc-chips .review { color: var(--red); background: rgba(255,123,123,.08); }
+.take-evidence { color: var(--muted); font-size: 8px; }
+.take-evidence summary { cursor: pointer; color: #aeb7bf; }
+.take-evidence dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 5px; }
+.take-evidence dl div { min-width: 0; }
+.take-evidence dt { color: var(--muted); }
+.take-evidence dd { margin: 2px 0 0; color: #c8d0d6; overflow-wrap: anywhere; }
+.quality-evidence { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.quality-evidence p { margin: 0; line-height: 1.45; }
+.raw-evidence summary { cursor: pointer; color: #9ea9b1; }
+.raw-evidence pre { max-height: 180px; overflow: auto; margin: 6px 0 0; padding: 8px; border-radius: 7px; background: #11161a; color: #bdc7ce; font: 8px/1.45 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
+.take-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .assembly-player { display: flex; align-items: center; gap: 13px; padding: 18px; }
 .assembly-player > div:first-child { margin-right: auto; }
 .assembly-player h2 { margin-top: 3px; font-size: 12px; }

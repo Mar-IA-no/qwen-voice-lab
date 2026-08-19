@@ -250,8 +250,9 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
   notifyRef.current = notify
   const [draft, setDraft] = useState({
     title: 'Nueva narración', voice_id: '', language: 'en' as Language, project_seed: 20260805,
-    temperature: 0.9, top_p: 1, top_k: 50, repetition_penalty: 1.05,
-    subtalker_temperature: 0.9, subtalker_top_p: 1, subtalker_top_k: 50,
+    do_sample: true, temperature: 0.9, top_p: 1, top_k: 50, repetition_penalty: 1.05,
+    subtalker_dosample: true, subtalker_temperature: 0.9, subtalker_top_p: 1,
+    subtalker_top_k: 50, max_new_tokens: 2048,
   })
 
   const loadProject = useCallback(async (id: string, hydrateEditor = false) => {
@@ -318,10 +319,10 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
         title: draft.title, voice_id: draft.voice_id, language: draft.language,
         markdown, project_seed: draft.project_seed,
         sampling: {
-          do_sample: true,
+          do_sample: draft.do_sample,
           temperature: draft.temperature, top_p: draft.top_p, top_k: draft.top_k,
-          repetition_penalty: draft.repetition_penalty, max_new_tokens: 2048,
-          subtalker_dosample: true, subtalker_temperature: draft.subtalker_temperature,
+          repetition_penalty: draft.repetition_penalty, max_new_tokens: draft.max_new_tokens,
+          subtalker_dosample: draft.subtalker_dosample, subtalker_temperature: draft.subtalker_temperature,
           subtalker_top_p: draft.subtalker_top_p, subtalker_top_k: draft.subtalker_top_k,
         },
       })
@@ -365,9 +366,15 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
         <label><span>Seed del proyecto</span><input type="number" value={draft.project_seed} onChange={(e) => setDraft({ ...draft, project_seed: Number(e.target.value) })} /></label>
         <label><span>Temperature</span><input type="number" min="0.01" max="2" step="0.05" value={draft.temperature} onChange={(e) => setDraft({ ...draft, temperature: Number(e.target.value) })} /></label></div>
       <details className="sampling-details"><summary>Sampling avanzado de talker y subtalker</summary><div className="field-grid three">
+        <label className="check-field"><input type="checkbox" checked={draft.do_sample} onChange={(e) => setDraft({ ...draft, do_sample: e.target.checked })} /><span>Talker sampling</span></label>
         <label><span>Talker top-p</span><input type="number" min="0.01" max="1" step="0.05" value={draft.top_p} onChange={(e) => setDraft({ ...draft, top_p: Number(e.target.value) })} /></label>
+        <label><span>Talker top-k</span><input type="number" min="1" max="1000" step="1" value={draft.top_k} onChange={(e) => setDraft({ ...draft, top_k: Number(e.target.value) })} /></label>
+        <label><span>Repetition penalty</span><input type="number" min="0.5" max="2" step="0.01" value={draft.repetition_penalty} onChange={(e) => setDraft({ ...draft, repetition_penalty: Number(e.target.value) })} /></label>
+        <label className="check-field"><input type="checkbox" checked={draft.subtalker_dosample} onChange={(e) => setDraft({ ...draft, subtalker_dosample: e.target.checked })} /><span>Subtalker sampling</span></label>
         <label><span>Subtalker temperature</span><input type="number" min="0.01" max="2" step="0.05" value={draft.subtalker_temperature} onChange={(e) => setDraft({ ...draft, subtalker_temperature: Number(e.target.value) })} /></label>
         <label><span>Subtalker top-p</span><input type="number" min="0.01" max="1" step="0.05" value={draft.subtalker_top_p} onChange={(e) => setDraft({ ...draft, subtalker_top_p: Number(e.target.value) })} /></label>
+        <label><span>Subtalker top-k</span><input type="number" min="1" max="1000" step="1" value={draft.subtalker_top_k} onChange={(e) => setDraft({ ...draft, subtalker_top_k: Number(e.target.value) })} /></label>
+        <label><span>Max new tokens</span><input type="number" min="64" max="8192" step="64" value={draft.max_new_tokens} onChange={(e) => setDraft({ ...draft, max_new_tokens: Number(e.target.value) })} /></label>
       </div></details>
       <EditorialInput markdown={markdown} setMarkdown={updateMarkdown} />
       <button className="primary-button" disabled={busy || !draft.voice_id}><Plus size={17} /> Crear proyecto</button>
@@ -389,6 +396,21 @@ function ProjectsPage({ projects, voices, notify, refresh }: {
           <div><strong>Toma {take.attempt}</strong><small>{take.status} · seed {take.seed}</small></div>
           <audio controls preload="none" src={`/api/takes/${take.id}/audio`} />
           <div className="qc-chips">{take.quality_reports.map((qc) => <span className={qc.verdict} title={qc.reasons.join(' · ')} key={qc.id}>{qc.validator.split('-')[0]} · {qc.verdict}</span>)}</div>
+          <details className="take-evidence"><summary>Evidencia y procedencia</summary>
+            <dl><div><dt>Modelo</dt><dd>{take.model}</dd></div><div><dt>Trim</dt><dd>{take.trim_threshold_db} dB · {take.trim_padding_ms} ms</dd></div><div><dt>WAV</dt><dd title={take.trimmed_sha256}>{shortHash(take.trimmed_sha256)}</dd></div><div><dt>Referencia</dt><dd title={take.voice_reference_sha256}>{shortHash(take.voice_reference_sha256)}</dd></div></dl>
+            <details className="raw-evidence"><summary>Sampling resuelto</summary><pre>{JSON.stringify(take.sampling, null, 2)}</pre></details>
+            {take.quality_reports.map((qc) => <div className="quality-evidence" key={`${qc.id}-evidence`}><strong>{qc.validator}</strong>
+              <span>WER {qc.wer == null ? '—' : qc.wer.toFixed(3)} · CER {qc.cer == null ? '—' : qc.cer.toFixed(3)} · cobertura {qc.token_coverage == null ? '—' : qc.token_coverage.toFixed(3)}</span>
+              {!!qc.block_coverages.length && <span>Bloques: {qc.block_coverages.map((value, index) => `${index + 1}:${value.toFixed(2)}`).join(' · ')}</span>}
+              {!!qc.missing_block_indexes.length && <span>Bloques faltantes: {qc.missing_block_indexes.map((index) => index + 1).join(' · ')}</span>}
+              {!!qc.leaked_reference_phrases.length && <span>Fuga de referencia: {qc.leaked_reference_phrases.join(' · ')}</span>}
+              {!!qc.identity_windows.length && <span>Identidad: mediana {qc.identity_median?.toFixed(3) ?? '—'} · mínima {qc.identity_min?.toFixed(3) ?? '—'} · ventanas {qc.identity_windows.map((value) => value.toFixed(3)).join(' · ')}</span>}
+              {qc.transcript && <p><b>Transcripción:</b> {qc.transcript}</p>}
+              {!!qc.alignment.length && <details className="raw-evidence"><summary>Alineación · {qc.alignment.length} marcas</summary><pre>{JSON.stringify(qc.alignment, null, 2)}</pre></details>}
+              {!!qc.reasons.length && <p className="error-copy">{qc.reasons.join(' · ')}</p>}
+            </div>)}
+          </details>
+          <div className="take-actions"><a className="download-button" href={`/api/takes/${take.id}/download`} download><Download size={14} /> WAV</a><a className="download-button" href={`/api/takes/${take.id}/download?raw=true`} download><Download size={14} /> Raw</a></div>
           {!take.selected && <button className="soft-button" onClick={() => {
             const override = take.status !== 'pass'
             const reason = override ? window.prompt('Motivo obligatorio del override:') ?? '' : undefined

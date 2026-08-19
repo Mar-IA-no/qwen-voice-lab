@@ -368,6 +368,8 @@ class Take(BaseModel):
     duration_seconds: float
     trim_start_ms: int = Field(default=0, ge=0)
     trim_end_ms: int = Field(default=0, ge=0)
+    trim_threshold_db: float = Field(default=-48, ge=-80, le=-10)
+    trim_padding_ms: int = Field(default=80, ge=0, le=1000)
     voice_id: str
     voice_reference_sha256: str
     model: str
@@ -390,6 +392,9 @@ class QualityReport(BaseModel):
     token_coverage: float | None = None
     prefix_coverage: float | None = None
     suffix_coverage: float | None = None
+    block_coverages: list[float] = Field(default_factory=list)
+    missing_block_indexes: list[int] = Field(default_factory=list)
+    leaked_reference_phrases: list[str] = Field(default_factory=list)
     identity_median: float | None = None
     identity_min: float | None = None
     identity_windows: list[float] = Field(default_factory=list)
@@ -438,6 +443,8 @@ class TakeView(BaseModel):
     duration_seconds: float
     trim_start_ms: int
     trim_end_ms: int
+    trim_threshold_db: float
+    trim_padding_ms: int
     voice_id: str
     voice_reference_sha256: str
     model: str

@@ -14,6 +14,7 @@ dependencies = [
   "numpy>=2.0,<3",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
+  "rapidfuzz>=3.14,<4",
   "soundfile>=0.13,<1",
   "uvicorn[standard]>=0.35,<1",
 ]
