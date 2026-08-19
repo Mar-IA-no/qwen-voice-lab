@@ -1,4 +1,4 @@
-import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Segment, Voice } from './types'
+import type { ArchiveAsset, Assembly, AuthStatus, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, SamplingSettings, Segment, Take, Voice } from './types'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -23,6 +23,18 @@ export const api = {
   capabilities: () => request<Capabilities>('/api/capabilities'),
   voices: () => request<Voice[]>('/api/voices'),
   jobs: () => request<Job[]>('/api/jobs?limit=100'),
+  projects: () => request<Project[]>('/api/projects'),
+  project: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
+  createProject: (payload: { title: string; voice_id: string; language: Language; markdown: string; project_seed: number; sampling: SamplingSettings }) => request<ProjectDetail>('/api/projects', jsonPost(payload)),
+  reviseProject: (id: string, markdown: string) => request<ProjectDetail>(`/api/projects/${id}/revisions`, jsonPost({ markdown })),
+  runProject: (id: string) => request<ProjectRun>(`/api/projects/${id}/runs`, jsonPost({})),
+  projectRuns: (id: string) => request<ProjectRun[]>(`/api/projects/${id}/runs`),
+  projectTakes: (id: string, segmentId: string) => request<Take[]>(`/api/projects/${id}/segments/${segmentId}/takes`),
+  generateTake: (id: string, segmentId: string) => request<ProjectRun>(`/api/projects/${id}/segments/${segmentId}/takes`, jsonPost({})),
+  selectTake: (id: string, segmentId: string, takeId: string, override = false, reason?: string) => request<ProjectDetail>(`/api/projects/${id}/segments/${segmentId}/takes/${takeId}/select`, jsonPost({ override, reason })),
+  previewProject: (id: string) => request<Assembly>(`/api/projects/${id}/preview`, jsonPost({})),
+  assembleProject: (id: string, override_reason?: string) => request<Assembly>(`/api/projects/${id}/assemblies`, jsonPost({ override_reason })),
+  projectAssemblies: (id: string) => request<Assembly[]>(`/api/projects/${id}/assemblies`),
   archive: () => request<ArchiveAsset[]>('/api/archive'),
   createVoice: (form: FormData) => request<Voice>('/api/voices', { method: 'POST', body: form }),
   deleteVoice: (id: string) => request<void>(`/api/voices/${id}`, { method: 'DELETE' }),

@@ -18,6 +18,14 @@ the exact code-to-Qwen label mapping, exposure of profile languages and rejectio
 of functional prosody outside those languages. Neutral synthesis remains
 available across the advertised language set without a functional profile.
 
+Long-form coverage verifies strict `[Ns]` compilation, rejection of legacy cues,
+stable segment reconciliation, take invalidation on text changes, deterministic
+seeds, durable QC, exact pause samples, pause-only take reuse, CPU preview,
+immutable manifests, authenticated assembly downloads, atomic revision/run
+exclusion, graceful active-run shutdown and final ordered-content audit. The
+isolated ASR environment is deployment-tested separately because it cannot share
+the TTS dependency set.
+
 Before production deployment, the operator must verify a restorable snapshot of
 the configured catalog and record the pre-deployment Git commit. Rollback after
 new multilingual `Voice` or `Comparison` records are persisted restores that

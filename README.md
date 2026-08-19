@@ -413,6 +413,7 @@ qwen-voice-lab/
 | Human operators | [Visual user manual · Spanish PDF](docs/user-guide/Qwen_Voice_Lab_Manual_de_Uso_ES.pdf) |
 | Editable manual source | [A4 landscape HTML guide](docs/user-guide/guide.html) |
 | Agents and API clients | [Operational agent guide](docs/AGENT_USAGE_GUIDE.md) |
+| Long-form producers | [Projects, canonical pauses, takes and validation](docs/LONG_FORM_PRODUCTION.md) |
 | Runtime implementers | [Architecture contract](docs/ARCHITECTURE.md) |
 | Security reviewers | [Security and privacy](SECURITY.md) |
 

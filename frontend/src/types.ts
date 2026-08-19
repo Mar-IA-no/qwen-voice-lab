@@ -26,6 +26,9 @@ export interface Capabilities {
   gpu_execution_mode: 'in-process' | 'wrapped-worker'
   gpu_worker_state: string
   gpu_worker_reason?: string | null
+  long_form_projects: boolean
+  local_validator_enabled: boolean
+  validator_models: string[]
 }
 
 export interface ArchiveAsset {
@@ -105,5 +108,105 @@ export interface Comparison {
   language: Language
   text: string
   seed: number
+  created_at: string
+}
+
+export interface SamplingSettings {
+  do_sample: boolean
+  temperature: number
+  top_p: number
+  top_k: number
+  repetition_penalty: number
+  subtalker_dosample: boolean
+  subtalker_temperature: number
+  subtalker_top_p: number
+  subtalker_top_k: number
+  max_new_tokens: number
+}
+
+export interface ProjectSegment {
+  id: string
+  project_id: string
+  revision_id: string
+  position: number
+  text: string
+  normalized_text: string
+  text_sha256: string
+  pause_after_ms: number
+  selected_take_id?: string | null
+}
+
+export interface SourceRevision {
+  id: string
+  project_id: string
+  number: number
+  markdown: string
+  source_sha256: string
+  created_at: string
+}
+
+export interface Project {
+  id: string
+  title: string
+  voice_id: string
+  language: Language
+  project_seed: number
+  sampling: SamplingSettings
+  status: 'draft' | 'generating' | 'needs_review' | 'ready'
+  current_revision_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ProjectDetail extends Project {
+  revision?: SourceRevision | null
+  segments: ProjectSegment[]
+}
+
+export interface QualityReport {
+  id: string
+  take_id: string
+  validator: string
+  verdict: 'pass' | 'retry' | 'review' | 'unavailable'
+  transcript: string
+  wer?: number | null
+  cer?: number | null
+  token_coverage?: number | null
+  prefix_coverage?: number | null
+  suffix_coverage?: number | null
+  identity_median?: number | null
+  identity_min?: number | null
+  reasons: string[]
+}
+
+export interface Take {
+  id: string
+  segment_id: string
+  attempt: number
+  seed: number
+  status: 'generated' | 'pass' | 'retry' | 'needs_review' | 'overridden'
+  duration_seconds: number
+  selected: boolean
+  override_reason?: string | null
+  quality_reports: QualityReport[]
+}
+
+export interface ProjectRun {
+  id: string
+  project_id: string
+  revision_id: string
+  status: 'queued' | 'running' | 'complete' | 'needs_review' | 'failed'
+  progress: number
+  error?: string | null
+}
+
+export interface Assembly {
+  id: string
+  project_id: string
+  revision_id: string
+  kind: 'preview' | 'final'
+  duration_seconds: number
+  audit_status: 'pending' | 'pass' | 'review' | 'overridden' | 'unavailable'
+  audit: Record<string, unknown>
   created_at: string
 }

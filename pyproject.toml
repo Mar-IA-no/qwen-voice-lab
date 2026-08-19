@@ -35,6 +35,7 @@ dev = [
 
 [project.scripts]
 qwen-voice-lab = "qwen_voice_lab.app:run"
+qvl = "qwen_voice_lab.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qwen_voice_lab"]
