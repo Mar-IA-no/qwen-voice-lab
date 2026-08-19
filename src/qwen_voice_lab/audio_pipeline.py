@@ -10,6 +10,32 @@ from .engine import sha256_file, write_wav
 from .models import ProjectSegment, Take
 
 
+def resolve_take_asset(take: Take, projects_root: Path, *, raw: bool = False) -> Path:
+    configured = Path(take.raw_file if raw else take.trimmed_file)
+    lexical_root = projects_root.absolute()
+    lexical_path = configured.absolute()
+    if lexical_root != lexical_path.parent and lexical_root not in lexical_path.parents:
+        raise ValueError("take audio is outside the projects directory")
+    cursor = lexical_root
+    for component in lexical_path.relative_to(lexical_root).parts:
+        cursor /= component
+        if cursor.is_symlink():
+            raise ValueError("take audio path must not contain symbolic links")
+    try:
+        path = configured.resolve(strict=True)
+        allowed = (projects_root / take.project_id).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError("take audio is unavailable") from exc
+    if allowed != path.parent and allowed not in path.parents:
+        raise ValueError("take audio is outside its project directory")
+    if not path.is_file():
+        raise ValueError("take audio is not a regular file")
+    expected = take.raw_sha256 if raw else take.trimmed_sha256
+    if sha256_file(path) != expected:
+        raise ValueError("take audio SHA-256 does not match its immutable record")
+    return path
+
+
 def trim_speech_edges(
     raw_file: Path,
     trimmed_file: Path,
@@ -45,6 +71,7 @@ def build_timeline(
     *,
     project_id: str,
     revision_id: str,
+    projects_root: Path,
 ) -> dict:
     chunks: list[np.ndarray] = []
     timeline = []
@@ -54,7 +81,14 @@ def build_timeline(
         if not segment.selected_take_id or segment.selected_take_id not in takes:
             raise ValueError(f"segment {segment.id} has no selected take")
         take = takes[segment.selected_take_id]
-        path = Path(take.trimmed_file)
+        if (
+            take.project_id != project_id
+            or take.segment_id != segment.id
+            or take.text_sha256 != segment.text_sha256
+        ):
+            raise ValueError(f"selected take {take.id} is incompatible with segment {segment.id}")
+        path = resolve_take_asset(take, projects_root)
+        verified_sha256 = sha256_file(path)
         audio, rate = sf.read(path, dtype="float32", always_2d=False)
         if sample_rate is None:
             sample_rate = rate
@@ -72,7 +106,7 @@ def build_timeline(
                 "position": segment.position,
                 "text_sha256": segment.text_sha256,
                 "take_id": take.id,
-                "take_sha256": take.trimmed_sha256,
+                "take_sha256": verified_sha256,
                 "speech_start_sample": start,
                 "speech_end_sample": cursor,
                 "pause_samples": pause_samples,

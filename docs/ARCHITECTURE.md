@@ -59,6 +59,6 @@ The application binds to loopback by default, requires a token for non-loopback 
 
 ## Long-form projects
 
-Projects are additive beside ordinary jobs. A strict editorial compiler turns spoken paragraphs and standalone `[Ns]` pauses into stable segments. Each segment owns immutable takes, provenance and quality reports. TTS produces speech-only files; deterministic trimming and pause assembly run on CPU. Pause-only revisions keep stable IDs and approved audio.
+Projects are additive beside ordinary jobs. A strict editorial compiler turns spoken paragraphs and standalone `[Ns]` pauses into stable segments. Each segment owns immutable takes, provenance and quality reports. TTS produces speech-only files; deterministic trimming and pause assembly run on CPU. Pause-only revisions keep stable IDs and expose hash-compatible historical takes; attempt numbers and deterministic seeds continue across those revisions. Assembly and take serving re-resolve every path below its project, reject symlinks, and verify the current audio SHA-256 against the immutable take record.
 
 The local Qwen3-ASR/ForcedAligner validator runs in a separate process and Python environment because its Transformers pin conflicts with Qwen3-TTS 0.1.1. TTS and validation require serial GPU admission. Final assemblies share the preview timeline builder and add a whole-output transcript audit. See [Long-form production](LONG_FORM_PRODUCTION.md) for the endpoint sequence, syntax, thresholds and deployment acceptance.

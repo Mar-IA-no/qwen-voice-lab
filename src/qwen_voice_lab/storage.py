@@ -221,6 +221,38 @@ class Store:
             )
         return project
 
+    def save_project_revision(
+        self, project: Project, revision: SourceRevision, segments: list[ProjectSegment]
+    ) -> None:
+        """Persist a source revision and its project pointer as one transaction."""
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO projects(id, created_at, updated_at, payload) VALUES(?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, "
+                "payload=excluded.payload",
+                (project.id, project.created_at, project.updated_at, self._payload(project)),
+            )
+            connection.execute(
+                "INSERT INTO source_revisions(id, project_id, number, created_at, payload) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (
+                    revision.id,
+                    revision.project_id,
+                    revision.number,
+                    revision.created_at,
+                    self._payload(revision),
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO project_segments(revision_id, id, project_id, position, payload) "
+                "VALUES(?, ?, ?, ?, ?)",
+                [
+                    (revision.id, row.id, row.project_id, row.position, self._payload(row))
+                    for row in segments
+                ],
+            )
+
     def get_project(self, project_id: str) -> Project | None:
         return self._get_payload("projects", project_id, Project)
 
@@ -306,6 +338,23 @@ class Store:
             )
         return run
 
+    def create_run_if_idle(self, run: ProjectRun) -> ProjectRun:
+        """Atomically reject a second active run for the same project."""
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT id FROM project_runs WHERE project_id = ? AND status IN (?, ?) LIMIT 1",
+                (run.project_id, "queued", "running"),
+            ).fetchone()
+            if active:
+                raise ValueError(f"project already has an active run: {active[0]}")
+            connection.execute(
+                "INSERT INTO project_runs(id, project_id, created_at, status, payload) "
+                "VALUES(?, ?, ?, ?, ?)",
+                (run.id, run.project_id, run.created_at, run.status, self._payload(run)),
+            )
+        return run
+
     def get_run(self, run_id: str) -> ProjectRun | None:
         return self._get_payload("project_runs", run_id, ProjectRun)
 
@@ -352,6 +401,17 @@ class Store:
             Take,
         )
 
+    def list_compatible_takes(
+        self, project_id: str, segment_id: str, text_sha256: str
+    ) -> list[Take]:
+        rows = self._query_payloads(
+            "SELECT payload FROM takes WHERE project_id = ? AND segment_id = ? "
+            "ORDER BY attempt DESC, created_at DESC",
+            (project_id, segment_id),
+            Take,
+        )
+        return [row for row in rows if row.text_sha256 == text_sha256]
+
     def save_quality_report(self, report: QualityReport) -> QualityReport:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -383,9 +443,7 @@ class Store:
             )
         return assembly
 
-    def save_identity_calibration(
-        self, calibration: IdentityCalibration
-    ) -> IdentityCalibration:
+    def save_identity_calibration(self, calibration: IdentityCalibration) -> IdentityCalibration:
         with self._lock, self._connect() as connection:
             connection.execute(
                 "INSERT INTO identity_calibrations"
@@ -403,14 +461,28 @@ class Store:
         return calibration
 
     def get_identity_calibration(
-        self, voice_id: str, language: str
+        self,
+        voice_id: str,
+        language: str,
+        validator: str | None = None,
+        validator_model_sha256: str | None = None,
     ) -> IdentityCalibration | None:
         rows = self._query_payloads(
             "SELECT payload FROM identity_calibrations WHERE voice_id = ? AND language = ?",
             (voice_id, language),
             IdentityCalibration,
         )
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        calibration = rows[0]
+        if validator is not None and calibration.validator != validator:
+            return None
+        if (
+            validator_model_sha256 is not None
+            and calibration.validator_model_sha256 != validator_model_sha256
+        ):
+            return None
+        return calibration
 
     def list_identity_calibrations(self, voice_id: str) -> list[IdentityCalibration]:
         return self._query_payloads(

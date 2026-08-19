@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
@@ -45,6 +46,8 @@ class Settings(BaseSettings):
     validator_command: str = ""
     validator_enabled: bool = False
     validator_speaker_model: str = ""
+    validator_speaker_model_sha256: str = ""
+    validator_device: str = ""
     validator_timeout_seconds: int = Field(default=180, ge=10, le=1800)
     project_max_attempts: int = Field(default=3, ge=1, le=10)
     trim_threshold_db: float = Field(default=-48, ge=-80, le=-10)
@@ -88,6 +91,15 @@ class Settings(BaseSettings):
             raise ValueError("QVL_VALIDATOR_COMMAND is required when QVL_VALIDATOR_ENABLED=true")
         if self.validator_enabled and not self.validator_speaker_model.strip():
             raise ValueError("QVL_VALIDATOR_SPEAKER_MODEL is required when validation is enabled")
+        if self.validator_enabled and not re.fullmatch(
+            r"[a-f0-9]{64}", self.validator_speaker_model_sha256.strip()
+        ):
+            raise ValueError(
+                "QVL_VALIDATOR_SPEAKER_MODEL_SHA256 must be a lowercase SHA-256 "
+                "when validation is enabled"
+            )
+        self.validator_speaker_model_sha256 = self.validator_speaker_model_sha256.strip()
+        self.validator_device = self.validator_device.strip() or self.device
         return self
 
     @property

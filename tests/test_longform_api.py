@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -9,8 +10,13 @@ from fastapi.testclient import TestClient
 from qwen_voice_lab.app import create_app
 from qwen_voice_lab.config import Settings
 from qwen_voice_lab.longform import deterministic_seed
-from qwen_voice_lab.models import QualityReport
-from qwen_voice_lab.quality import ValidationResult, content_metrics
+from qwen_voice_lab.models import ProjectRun, ProjectStatus, QualityReport
+from qwen_voice_lab.quality import (
+    MOCK_IDENTITY_MODEL_SHA256,
+    MOCK_IDENTITY_VALIDATOR,
+    ValidationResult,
+    content_metrics,
+)
 
 
 def client_for(tmp_path: Path) -> TestClient:
@@ -108,13 +114,9 @@ def test_project_pipeline_persists_takes_qc_exact_pauses_and_final_audit(
         assert final["audit"]["wer"] == 0
         assert client.get(f"/api/assemblies/{final['id']}/download").status_code == 200
 
-        manual = client.post(
-            f"/api/projects/{project['id']}/segments/{first['id']}/takes"
-        ).json()
+        manual = client.post(f"/api/projects/{project['id']}/segments/{first['id']}/takes").json()
         assert wait_run(client, manual["id"])["status"] == "complete"
-        reviewed = client.get(
-            f"/api/projects/{project['id']}/segments/{first['id']}/takes"
-        ).json()
+        reviewed = client.get(f"/api/projects/{project['id']}/segments/{first['id']}/takes").json()
         assert len(reviewed) == 2
         assert next(row for row in reviewed if row["attempt"] == 1)["selected"] is True
         assert next(row for row in reviewed if row["attempt"] == 2)["selected"] is False
@@ -138,7 +140,20 @@ def test_pause_only_revision_reuses_selected_audio_without_new_tts(tmp_path: Pat
         assert [row["id"] for row in after["segments"]] == [row["id"] for row in before["segments"]]
         assert [row["selected_take_id"] for row in after["segments"]] == take_ids
         assert after["status"] == "ready"
+        compatible = client.get(
+            f"/api/projects/{project['id']}/segments/{after['segments'][0]['id']}/takes"
+        ).json()
+        assert [row["id"] for row in compatible] == [take_ids[0]]
         assert client.post(f"/api/projects/{project['id']}/runs").status_code == 409
+        manual = client.post(
+            f"/api/projects/{project['id']}/segments/{after['segments'][0]['id']}/takes"
+        ).json()
+        assert wait_run(client, manual["id"])["status"] == "complete"
+        compatible = client.get(
+            f"/api/projects/{project['id']}/segments/{after['segments'][0]['id']}/takes"
+        ).json()
+        assert [row["attempt"] for row in compatible] == [2, 1]
+        assert compatible[0]["seed"] == deterministic_seed(17, after["segments"][0]["id"], 2)
         preview = client.post(f"/api/projects/{project['id']}/preview", json={}).json()
         manifest = client.get(f"/api/assemblies/{preview['id']}/manifest").json()
         assert manifest["timeline"][0]["pause_samples"] == 2 * manifest["sample_rate"]
@@ -157,6 +172,7 @@ def test_invalid_editorial_body_returns_line_diagnostic(tmp_path: Path) -> None:
         )
         assert response.status_code == 422
         assert "line 1" in response.json()["detail"]
+        assert client.get("/api/projects").json() == []
 
 
 def test_content_metrics_detect_missing_suffix_and_reordered_words() -> None:
@@ -165,6 +181,8 @@ def test_content_metrics_detect_missing_suffix_and_reordered_words() -> None:
     assert missing["suffix_coverage"] < 0.8
     assert missing["wer"] > 0.12
     assert reordered["wer"] > 0.12
+    repeated_elsewhere = content_metrics("end one middle end one two", "end one middle two")
+    assert repeated_elsewhere["suffix_coverage"] < 0.8
 
 
 def test_retry_orchestration_uses_generation_and_validation_waves(tmp_path: Path) -> None:
@@ -214,6 +232,8 @@ def test_calibrated_identity_outlier_retries_and_requires_review(tmp_path: Path)
                 "min_window_score": 1.0,
                 "min_median_score": 1.0,
                 "notes": "Strict test-only boundary from controlled fixtures.",
+                "validator": MOCK_IDENTITY_VALIDATOR,
+                "validator_model_sha256": MOCK_IDENTITY_MODEL_SHA256,
             },
         )
         assert calibration.status_code == 201
@@ -221,9 +241,7 @@ def test_calibrated_identity_outlier_retries_and_requires_review(tmp_path: Path)
         assert wait_run(client, run["id"])["status"] == "needs_review"
         detail = client.get(f"/api/projects/{project['id']}").json()
         first = detail["segments"][0]
-        takes = client.get(
-            f"/api/projects/{project['id']}/segments/{first['id']}/takes"
-        ).json()
+        takes = client.get(f"/api/projects/{project['id']}/segments/{first['id']}/takes").json()
         assert len(takes) == 3
         identity = next(
             report
@@ -234,7 +252,118 @@ def test_calibrated_identity_outlier_retries_and_requires_review(tmp_path: Path)
         assert identity["calibration_id"] == calibration.json()["id"]
         calibration_id = calibration.json()["id"]
     with client_for(tmp_path) as restarted:
-        calibrations = restarted.get(
-            "/api/voices/voice_amara_sol/identity-calibrations"
-        ).json()
+        calibrations = restarted.get("/api/voices/voice_amara_sol/identity-calibrations").json()
         assert [row["id"] for row in calibrations] == [calibration_id]
+
+
+def test_duplicate_active_run_is_rejected_atomically(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        blocker = ProjectRun(
+            id="run_blocker",
+            project_id=project["id"],
+            revision_id=project["revision"]["id"],
+            segment_ids=[project["segments"][0]["id"]],
+        )
+        client.app.state.store.save_run(blocker)
+        response = client.post(f"/api/projects/{project['id']}/runs")
+        assert response.status_code == 409
+        assert len(client.app.state.store.list_runs(project["id"])) == 1
+
+
+def test_take_assets_fail_closed_after_tamper_or_symlink(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        run = client.post(f"/api/projects/{project['id']}/runs").json()
+        assert wait_run(client, run["id"])["status"] == "complete"
+        detail = client.get(f"/api/projects/{project['id']}").json()
+        take_id = detail["segments"][0]["selected_take_id"]
+        take = client.app.state.store.get_take(take_id)
+        assert take is not None
+        speech = Path(take.trimmed_file)
+        original = speech.read_bytes()
+        speech.write_bytes(original + b"tampered")
+        assert client.get(f"/api/takes/{take_id}/audio").status_code == 404
+        assert client.post(f"/api/projects/{project['id']}/preview", json={}).status_code == 409
+
+        speech.write_bytes(original)
+        outside = tmp_path / "outside.wav"
+        outside.write_bytes(original)
+        speech.unlink()
+        os.symlink(outside, speech)
+        assert client.get(f"/api/takes/{take_id}/audio").status_code == 404
+        assert client.post(f"/api/projects/{project['id']}/preview", json={}).status_code == 409
+
+
+def test_blank_audit_and_calibration_notes_are_rejected(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        assert (
+            client.post(
+                f"/api/projects/{project['id']}/preview", json={"override_reason": "   "}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/api/voices/voice_amara_sol/identity-calibrations",
+                json={
+                    "language": "it",
+                    "min_window_score": 0,
+                    "min_median_score": 0,
+                    "notes": "   ",
+                    "validator": MOCK_IDENTITY_VALIDATOR,
+                    "validator_model_sha256": MOCK_IDENTITY_MODEL_SHA256,
+                },
+            ).status_code
+            == 422
+        )
+
+
+def test_calibration_with_wrong_provenance_remains_advisory(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        response = client.post(
+            "/api/voices/voice_amara_sol/identity-calibrations",
+            json={
+                "language": "it",
+                "min_window_score": 1,
+                "min_median_score": 1,
+                "notes": "Different frozen model.",
+                "validator": MOCK_IDENTITY_VALIDATOR,
+                "validator_model_sha256": "f" * 64,
+            },
+        )
+        assert response.status_code == 201
+        run = client.post(f"/api/projects/{project['id']}/runs").json()
+        assert wait_run(client, run["id"])["status"] == "complete"
+        detail = client.get(f"/api/projects/{project['id']}").json()
+        reports = client.get(
+            f"/api/projects/{project['id']}/segments/{detail['segments'][0]['id']}/takes"
+        ).json()[0]["quality_reports"]
+        identity = next(row for row in reports if row["validator"] == MOCK_IDENTITY_VALIDATOR)
+        assert identity["calibration_id"] is None
+        assert identity["verdict"] == "pass"
+        assert "provenance does not match" in identity["reasons"][0]
+
+
+def test_startup_reconciles_interrupted_project_status(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        row = client.app.state.store.get_project(project["id"])
+        assert row is not None
+        row.status = ProjectStatus.GENERATING
+        client.app.state.store.save_project(row)
+        client.app.state.store.save_run(
+            ProjectRun(
+                id="run_interrupted",
+                project_id=project["id"],
+                revision_id=project["revision"]["id"],
+                segment_ids=[project["segments"][0]["id"]],
+            )
+        )
+    with client_for(tmp_path) as restarted:
+        detail = restarted.get(f"/api/projects/{project['id']}").json()
+        assert detail["status"] == "needs_review"
+        run = restarted.get("/api/project-runs/run_interrupted").json()
+        assert run["status"] == "failed"

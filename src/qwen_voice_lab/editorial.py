@@ -21,6 +21,7 @@ LEGACY_HOLD_RE = re.compile(
 )
 FORBIDDEN_LINE_RE = re.compile(r"^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|~~~)")
 LEGACY_CUES = ("**", "__", "↘", "↗", "→", "←", "^", "<break", "[T]", "[S]", "[D]", "[R]")
+INLINE_MARKDOWN_RE = re.compile(r"(?:\[[^\]]*\]|[*_`]|!\[|<[^>]+>)")
 
 
 def _new_id(prefix: str) -> str:
@@ -66,7 +67,8 @@ def compile_markdown(markdown: str) -> list[CompiledBlock]:
 
     paragraphs: list[tuple[int, str]] = []
     pending: list[tuple[int, str]] = []
-    for line_number, raw in enumerate(markdown.replace("\r\n", "\n").split("\n"), start=1):
+    normalized_source = markdown.replace("\r\n", "\n").replace("\r", "\n")
+    for line_number, raw in enumerate(normalized_source.split("\n"), start=1):
         value = raw.strip()
         if not value:
             if pending:
@@ -80,9 +82,13 @@ def compile_markdown(markdown: str) -> list[CompiledBlock]:
                 pending = []
             paragraphs.append((line_number, value))
             continue
-        if value.startswith("[") and value.endswith("]"):
+        if "[" in value or "]" in value:
             raise EditorialError(line_number, "unknown directive; pauses use standalone [Ns]")
-        if FORBIDDEN_LINE_RE.match(value) or any(cue in value for cue in LEGACY_CUES):
+        if (
+            FORBIDDEN_LINE_RE.match(value)
+            or any(cue in value for cue in LEGACY_CUES)
+            or INLINE_MARKDOWN_RE.search(value)
+        ):
             raise EditorialError(
                 line_number,
                 "formatting and legacy prosody cues are not spoken input; migrate them first",
@@ -130,14 +136,28 @@ def reconcile_segments(
     blocks: list[CompiledBlock],
     previous: list[ProjectSegment],
 ) -> list[ProjectSegment]:
-    reusable: dict[str, deque[ProjectSegment]] = defaultdict(deque)
+    exact: dict[str, deque[ProjectSegment]] = defaultdict(deque)
+    normalized: dict[str, deque[ProjectSegment]] = defaultdict(deque)
     for segment in sorted(previous, key=lambda row: row.position):
-        reusable[segment.normalized_text].append(segment)
+        exact[segment.text_sha256].append(segment)
+        normalized[segment.normalized_text].append(segment)
+    used: set[str] = set()
+    assignments: list[ProjectSegment | None] = [None] * len(blocks)
+    for position, block in enumerate(blocks):
+        while exact[block.text_sha256] and assignments[position] is None:
+            candidate = exact[block.text_sha256].popleft()
+            if candidate.id not in used:
+                assignments[position] = candidate
+                used.add(candidate.id)
+    for position, block in enumerate(blocks):
+        while assignments[position] is None and normalized[block.normalized_text]:
+            candidate = normalized[block.normalized_text].popleft()
+            if candidate.id not in used:
+                assignments[position] = candidate
+                used.add(candidate.id)
     result = []
     for position, block in enumerate(blocks):
-        prior = (
-            reusable[block.normalized_text].popleft() if reusable[block.normalized_text] else None
-        )
+        prior = assignments[position]
         result.append(
             ProjectSegment(
                 id=prior.id if prior else _new_id("seg"),
@@ -163,73 +183,120 @@ def migrate_legacy_markdown(markdown: str) -> tuple[str, list[dict[str, object]]
 
     stream: list[tuple[str, str | float]] = []
     report: list[dict[str, object]] = []
-    raw_lines = markdown.replace("\r\n", "\n").split("\n")
-    in_preamble = any(re.fullmatch(r"\s*[-_*]{3,}\s*", row) for row in raw_lines)
+    raw_lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    paragraphs: list[list[tuple[int, str]]] = []
+    pending: list[tuple[int, str]] = []
+
+    def flush() -> None:
+        nonlocal pending
+        if pending:
+            paragraphs.append(pending)
+            pending = []
+
     for line_number, raw in enumerate(raw_lines, start=1):
         value = raw.strip()
         if not value:
-            continue
-        if in_preamble:
-            report.append({"line": line_number, "from": raw, "to": "", "action": "discard"})
-            if re.fullmatch(r"[-_*]{3,}", value):
-                in_preamble = False
+            flush()
             continue
         if (
             FORBIDDEN_LINE_RE.match(value)
             or re.fullmatch(r"[-_*]{3,}", value)
-            or (value.startswith(">") and value.endswith("]**"))
             or re.fullmatch(r"\*?\(.*\)\*?", value)
         ):
-            report.append({"line": line_number, "from": raw, "to": "", "action": "discard"})
+            flush()
+            report.append(
+                {"line": line_number, "from": raw, "to": "", "action": "discard-structure"}
+            )
             continue
-        hold = LEGACY_HOLD_RE.search(value)
-        if hold:
-            start = float(hold.group("start"))
-            end = float(hold.group("end") or start)
-            seconds = (start + end) / 2
-            stream.append(("pause", seconds))
+        if (
+            PAUSE_RE.fullmatch(value)
+            or LEGACY_PAUSE_RE.fullmatch(value)
+            or value in {"^", "/"}
+            or LEGACY_HOLD_RE.fullmatch(value)
+        ):
+            flush()
+            paragraphs.append([(line_number, value)])
+            continue
+        pending.append((line_number, value))
+    flush()
+
+    cue_re = re.compile(
+        rf"({LEGACY_HOLD_RE.pattern}|(?<!\S)/(?!\S)|\^|…+|\.{{3,}})",
+        re.IGNORECASE,
+    )
+    for paragraph in paragraphs:
+        line_number = paragraph[0][0]
+        value = " ".join(row for _, row in paragraph)
+        if len(paragraph) > 1:
             report.append(
                 {
                     "line": line_number,
-                    "from": raw,
-                    "to": f"[{seconds:g}s]",
-                    "action": "convert-hold",
+                    "from": "\n".join(row for _, row in paragraph),
+                    "to": value,
+                    "action": "join-soft-wrap",
                 }
             )
-            continue
         legacy_pause = LEGACY_PAUSE_RE.fullmatch(value)
-        if legacy_pause:
-            converted = f"[{legacy_pause.group('seconds')}s]"
-            stream.append(("pause", float(legacy_pause.group("seconds"))))
-            report.append({"line": line_number, "from": raw, "to": converted})
-            continue
         canonical_pause = PAUSE_RE.fullmatch(value)
-        if canonical_pause:
-            stream.append(("pause", float(canonical_pause.group("seconds"))))
+        if legacy_pause or canonical_pause:
+            seconds = float((legacy_pause or canonical_pause).group("seconds"))
+            stream.append(("pause", seconds))
+            if legacy_pause:
+                report.append(
+                    {
+                        "line": line_number,
+                        "from": value,
+                        "to": f"[{seconds:g}s]",
+                        "action": "convert-pause",
+                    }
+                )
             continue
-        if value == "^":
-            stream.append(("pause", 1.2))
-            report.append({"line": line_number, "from": raw, "to": "[1.2s]"})
-            continue
+
         converted = value
         for cue in ("**", "__", "↘", "↗", "→", "←"):
-            converted = converted.replace(cue, "")
-        converted = re.sub(r"(?<!\*)\*(?!\*)", "", converted)
-        converted = re.sub(r"\[(?:T|S|D|R)\]", "", converted)
-        parts = re.split(r"(\s*/\s+|\s*\^\s*|…+|\.{3,})", converted)
-        for part in parts:
-            if not part:
-                continue
-            if "^" in part:
-                stream.append(("pause", 1.2))
-            elif part.strip() == "/":
-                stream.append(("pause", 0.5))
-            elif "…" in part or re.fullmatch(r"\.{3,}", part):
-                stream.append(("pause", 3.0))
-            elif speech := part.strip():
+            if cue in converted:
+                converted = converted.replace(cue, "")
+                report.append(
+                    {"line": line_number, "from": cue, "to": "", "action": "remove-prosody-cue"}
+                )
+        converted, count = re.subn(r"(?<!\*)\*(?!\*)", "", converted)
+        if count:
+            report.append({"line": line_number, "from": "*", "to": "", "action": "remove-emphasis"})
+        converted, count = re.subn(r"\[(?:T|S|D|R)\]", "", converted)
+        if count:
+            report.append(
+                {
+                    "line": line_number,
+                    "from": "function tag",
+                    "to": "",
+                    "action": "remove-prosody-cue",
+                }
+            )
+
+        cursor = 0
+        for match in cue_re.finditer(converted):
+            if speech := converted[cursor : match.start()].strip():
                 stream.append(("speech", speech))
-        if converted != raw or len(parts) > 1:
-            report.append({"line": line_number, "from": raw, "to": converted})
+            token = match.group(0)
+            hold = LEGACY_HOLD_RE.fullmatch(token)
+            if hold:
+                start = float(hold.group("start"))
+                end = float(hold.group("end") or start)
+                seconds = (start + end) / 2
+                action = "convert-hold"
+            elif token == "^":
+                seconds, action = 1.2, "convert-caret"
+            elif token == "/":
+                seconds, action = 0.5, "convert-slash"
+            else:
+                seconds, action = 3.0, "convert-ellipsis"
+            stream.append(("pause", seconds))
+            report.append(
+                {"line": line_number, "from": token, "to": f"[{seconds:g}s]", "action": action}
+            )
+            cursor = match.end()
+        if speech := converted[cursor:].strip():
+            stream.append(("speech", speech))
     collapsed: list[tuple[str, str | float]] = []
     for kind, value in stream:
         if kind == "speech" and not normalize_spoken_text(str(value)):

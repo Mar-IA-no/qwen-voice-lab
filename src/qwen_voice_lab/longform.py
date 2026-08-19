@@ -58,12 +58,27 @@ class LongFormManager:
 
     async def start(self) -> None:
         for project in self.store.list_projects():
+            interrupted = False
             for run in self.store.list_runs(project.id):
                 if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
+                    interrupted = True
                     run.status = RunStatus.FAILED
                     run.error = "The process stopped before this run completed."
                     run.finished_at = utc_now()
                     self.store.save_run(run)
+            if interrupted:
+                segments = (
+                    self.store.list_segments(project.current_revision_id)
+                    if project.current_revision_id
+                    else []
+                )
+                project.status = (
+                    ProjectStatus.READY
+                    if segments and all(row.selected_take_id for row in segments)
+                    else ProjectStatus.NEEDS_REVIEW
+                )
+                project.updated_at = utc_now()
+                self.store.save_project(project)
         self._worker = asyncio.create_task(self._run(), name="qvl-long-form-worker")
 
     async def stop(self) -> None:
@@ -78,6 +93,7 @@ class LongFormManager:
     def create_project(self, request: ProjectCreate) -> ProjectDetail:
         if not self.store.get_voice(request.voice_id):
             raise KeyError(request.voice_id)
+        blocks = compile_markdown(request.markdown)
         project = Project(
             id=new_id("project"),
             title=request.title,
@@ -86,8 +102,7 @@ class LongFormManager:
             project_seed=request.project_seed,
             sampling=request.sampling,
         )
-        self.store.save_project(project)
-        return self.add_revision(project.id, RevisionCreate(markdown=request.markdown))
+        return self._persist_revision(project, request.markdown, blocks, [], [])
 
     def add_revision(self, project_id: str, request: RevisionCreate) -> ProjectDetail:
         project = self._project(project_id)
@@ -103,16 +118,19 @@ class LongFormManager:
             if project.current_revision_id
             else []
         )
+        return self._persist_revision(project, request.markdown, blocks, previous, revisions)
+
+    def _persist_revision(
+        self, project: Project, markdown: str, blocks, previous, revisions
+    ) -> ProjectDetail:
         revision = SourceRevision(
             id=new_id("revision"),
             project_id=project.id,
             number=(revisions[0].number + 1) if revisions else 1,
-            markdown=request.markdown,
-            source_sha256=hashlib.sha256(request.markdown.encode("utf-8")).hexdigest(),
+            markdown=markdown,
+            source_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
         )
         segments = reconcile_segments(project.id, revision.id, blocks, previous)
-        self.store.save_revision(revision)
-        self.store.save_segments(revision.id, segments)
         project.current_revision_id = revision.id
         project.status = (
             ProjectStatus.READY
@@ -120,7 +138,7 @@ class LongFormManager:
             else ProjectStatus.DRAFT
         )
         project.updated_at = utc_now()
-        self.store.save_project(project)
+        self.store.save_project_revision(project, revision, segments)
         return ProjectDetail(**project.model_dump(), revision=revision, segments=segments)
 
     def get_project(self, project_id: str) -> ProjectDetail:
@@ -158,20 +176,25 @@ class LongFormManager:
             max_attempts=max_attempts or self.settings.project_max_attempts,
             auto_select=auto_select,
         )
-        self.store.save_run(run)
+        self.store.create_run_if_idle(run)
         await self.queue.put(run.id)
         return run
 
     def list_takes(self, project_id: str, segment_id: str) -> list[TakeDetail]:
         project = self.get_project(project_id)
-        if not project.revision or not self.store.get_segment(project.revision.id, segment_id):
+        segment = (
+            self.store.get_segment(project.revision.id, segment_id) if project.revision else None
+        )
+        if not project.revision or not segment:
             raise KeyError(segment_id)
         return [
             TakeDetail(
                 **take.model_dump(),
                 quality_reports=self.store.list_quality_reports(take.id),
             )
-            for take in self.store.list_takes(project.revision.id, segment_id)
+            for take in self.store.list_compatible_takes(
+                project.id, segment_id, segment.text_sha256
+            )
         ]
 
     def select_take(
@@ -185,12 +208,15 @@ class LongFormManager:
             not segment
             or not take
             or take.segment_id != segment.id
-            or take.revision_id != detail.revision.id
+            or take.project_id != detail.id
+            or take.text_sha256 != segment.text_sha256
         ):
             raise KeyError(take_id)
         if take.status != TakeStatus.PASS and not selection.override:
             raise ValueError("only passing takes can be selected without an override")
-        for previous in self.store.list_takes(detail.revision.id, segment.id):
+        for previous in self.store.list_compatible_takes(
+            detail.id, segment.id, segment.text_sha256
+        ):
             if previous.selected:
                 previous.selected = False
                 self.store.save_take(previous)
@@ -233,6 +259,7 @@ class LongFormManager:
             takes,  # type: ignore[arg-type]
             project_id=project_id,
             revision_id=detail.revision.id,
+            projects_root=self.settings.projects_dir,
         )
         audit_status = "pending"
         audit = {}
@@ -308,7 +335,9 @@ class LongFormManager:
             for _ in range(run.max_attempts):
                 generated = []
                 for segment in pending.values():
-                    existing = self.store.list_takes(revision.id, segment.id)
+                    existing = self.store.list_compatible_takes(
+                        project.id, segment.id, segment.text_sha256
+                    )
                     attempt = max((row.attempt for row in existing), default=0) + 1
                     take, technical = await self._render_take(
                         project, revision, segment, voice, attempt
@@ -356,23 +385,32 @@ class LongFormManager:
                     self.store.save_quality_report(content)
                     if validation.identity:
                         validation.identity.take_id = take.id
+                        candidate = self.store.get_identity_calibration(voice.id, project.language)
                         calibration = self.store.get_identity_calibration(
-                            voice.id, project.language
+                            voice.id,
+                            project.language,
+                            validation.identity.validator,
+                            validation.identity.validator_model_sha256,
                         )
                         if calibration and validation.identity.identity_windows:
                             validation.identity.calibration_id = calibration.id
+                            validation.identity.reasons = [f"calibration {calibration.id} applied"]
                             median = validation.identity.identity_median
                             minimum = validation.identity.identity_min
+                            failures = []
                             if median is not None and median < calibration.min_median_score:
-                                validation.identity.reasons.append(
+                                failures.append(
                                     "median speaker score is below calibrated threshold"
                                 )
                             if minimum is not None and minimum < calibration.min_window_score:
-                                validation.identity.reasons.append(
-                                    "a speaker window is below calibrated threshold"
-                                )
-                            if len(validation.identity.reasons) > 1:
-                                validation.identity.verdict = "retry"
+                                failures.append("a speaker window is below calibrated threshold")
+                            validation.identity.reasons.extend(failures)
+                            validation.identity.verdict = "retry" if failures else "pass"
+                        elif candidate:
+                            validation.identity.reasons = [
+                                "calibration provenance does not match this scorer/model; "
+                                "score is advisory"
+                            ]
                         self.store.save_quality_report(validation.identity)
                     verdict = technical.verdict
                     if verdict == "pass":
@@ -410,7 +448,9 @@ class LongFormManager:
             if pending:
                 needs_review = True
                 for segment in pending.values():
-                    for take in self.store.list_takes(revision.id, segment.id):
+                    for take in self.store.list_compatible_takes(
+                        project.id, segment.id, segment.text_sha256
+                    ):
                         if take.status == TakeStatus.RETRY:
                             take.status = TakeStatus.NEEDS_REVIEW
                             self.store.save_take(take)

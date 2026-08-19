@@ -394,6 +394,7 @@ class QualityReport(BaseModel):
     identity_min: float | None = None
     identity_windows: list[float] = Field(default_factory=list)
     calibration_id: str | None = None
+    validator_model_sha256: str | None = None
     alignment: list[dict[str, Any]] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=utc_now)
@@ -401,15 +402,26 @@ class QualityReport(BaseModel):
 
 class IdentityCalibrationCreate(BaseModel):
     language: Language
+    validator: Annotated[str, Field(min_length=1, max_length=200)]
+    validator_model_sha256: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
     min_window_score: float = Field(ge=-1, le=1)
     min_median_score: float = Field(ge=-1, le=1)
     notes: Annotated[str, Field(min_length=1, max_length=1000)]
+
+    @field_validator("validator", "notes")
+    @classmethod
+    def strip_nonblank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
 
 class IdentityCalibration(IdentityCalibrationCreate):
     id: str
     voice_id: str
     validator: str = "speechbrain-ecapa-voxceleb-window-v1"
+    validator_model_sha256: str = "0" * 64
     created_at: str = Field(default_factory=utc_now)
 
 
@@ -492,3 +504,13 @@ class AssemblyView(BaseModel):
 
 class AssemblyRequest(BaseModel):
     override_reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("override_reason")
+    @classmethod
+    def normalize_override_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("override_reason must not be blank")
+        return value

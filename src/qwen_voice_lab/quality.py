@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shlex
+import signal
 import subprocess
 import threading
 import uuid
@@ -24,6 +27,8 @@ LANGUAGE_NAMES = {
     Language.IT: "Italian",
     Language.DE: "German",
 }
+MOCK_IDENTITY_VALIDATOR = "mock-acoustic-window-v1"
+MOCK_IDENTITY_MODEL_SHA256 = hashlib.sha256(MOCK_IDENTITY_VALIDATOR.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -60,14 +65,18 @@ def content_metrics(expected: str, transcript: str) -> dict[str, float]:
     actual_set = set(actual_words)
     coverage = sum(word in actual_set for word in expected_words) / max(1, len(expected_words))
     edge = min(3, len(expected_words))
-    prefix = sum(word in actual_set for word in expected_words[:edge]) / max(1, edge)
-    suffix = sum(word in actual_set for word in expected_words[-edge:]) / max(1, edge)
+    expected_prefix = expected_words[:edge]
+    expected_suffix = expected_words[-edge:]
+    actual_prefix = actual_words[:edge]
+    actual_suffix = actual_words[-edge:]
+    prefix = 1 - _distance(expected_prefix, actual_prefix) / max(1, edge)
+    suffix = 1 - _distance(expected_suffix, actual_suffix) / max(1, edge)
     return {
         "wer": wer,
         "cer": cer,
         "token_coverage": coverage,
-        "prefix_coverage": prefix,
-        "suffix_coverage": suffix,
+        "prefix_coverage": max(0.0, prefix),
+        "suffix_coverage": max(0.0, suffix),
     }
 
 
@@ -106,10 +115,34 @@ class ContentValidator:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._lock = threading.RLock()
+        self._invoke_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
+        self._closed = False
 
     def close(self) -> None:
-        return None
+        with self._state_lock:
+            self._closed = True
+            process = self._process
+        if not process or process.poll() is not None:
+            return
+        self._terminate(process)
+
+    @staticmethod
+    def _terminate(process: subprocess.Popen[str]) -> None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=3)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
 
     def validate(
         self, audio: Path, expected: str, language: Language, *, mock: bool = False
@@ -128,7 +161,8 @@ class ContentValidator:
                     "validator": "mock-content-oracle-v1",
                     "transcript": expected,
                     "alignment": [],
-                    "identity_validator": "mock-acoustic-window-v1",
+                    "identity_validator": MOCK_IDENTITY_VALIDATOR,
+                    "identity_model_sha256": MOCK_IDENTITY_MODEL_SHA256,
                     "identity_scores": (
                         identity_scores(reference, audio) if reference is not None else []
                     ),
@@ -179,6 +213,12 @@ class ContentValidator:
             reasons.append("opening words are missing")
         if metrics["suffix_coverage"] < 0.8:
             reasons.append("ending words are missing")
+        alignment = list(payload.get("alignment", []))
+        if alignment:
+            aligned_text = " ".join(str(row.get("text", "")) for row in alignment)
+            aligned_suffix = content_metrics(expected, aligned_text)["suffix_coverage"]
+            if aligned_suffix < 0.8:
+                reasons.append("forced-alignment endpoint does not contain the expected ending")
         content = QualityReport(
             id=f"qc_{uuid.uuid4().hex[:16]}",
             take_id="pending",
@@ -186,7 +226,7 @@ class ContentValidator:
             verdict="retry" if reasons else "pass",
             transcript=transcript,
             normalized_transcript=normalize_spoken_text(transcript),
-            alignment=list(payload.get("alignment", [])),
+            alignment=alignment,
             reasons=reasons,
             **metrics,
         )
@@ -198,11 +238,12 @@ class ContentValidator:
                 id=f"qc_{uuid.uuid4().hex[:16]}",
                 take_id="pending",
                 validator=str(payload.get("identity_validator", "ecapa-speaker-window-v1")),
+                validator_model_sha256=str(payload.get("identity_model_sha256", "")) or None,
                 verdict="pass" if scores else "unavailable",
                 identity_median=float(np.median(scores)) if scores else None,
                 identity_min=min(scores) if scores else None,
                 identity_windows=scores,
-                reasons=["uncalibrated speaker score; identity is not an automatic rejection gate"],
+                reasons=["no matching calibration; speaker score is advisory"],
             )
         return ValidationResult(content=content, identity=identity)
 
@@ -215,6 +256,8 @@ class ContentValidator:
                 "asr_model": self.settings.qwen_asr_model,
                 "aligner_model": self.settings.qwen_aligner_model,
                 "speaker_model": self.settings.validator_speaker_model,
+                "speaker_model_sha256": self.settings.validator_speaker_model_sha256,
+                "device": self.settings.validator_device,
                 "items": [
                     {
                         "audio": str(audio.resolve()),
@@ -226,19 +269,39 @@ class ContentValidator:
                 ],
             }
         )
-        with self._lock:
-            completed = subprocess.run(
+        with self._invoke_lock:
+            with self._state_lock:
+                if self._closed:
+                    raise RuntimeError("validator is closed")
+            process = subprocess.Popen(
                 command,
-                input=request + "\n",
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
-                timeout=self.settings.validator_timeout_seconds,
-                check=False,
+                start_new_session=True,
             )
-        if completed.returncode:
-            detail = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(f"validator worker failed ({completed.returncode}): {detail}")
-        lines = [line for line in completed.stdout.splitlines() if line.startswith("QVL_ASR ")]
+            with self._state_lock:
+                if self._closed:
+                    self._terminate(process)
+                    raise RuntimeError("validator is closed")
+                self._process = process
+            try:
+                try:
+                    stdout, stderr = process.communicate(
+                        request + "\n", timeout=self.settings.validator_timeout_seconds
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    self._terminate(process)
+                    raise RuntimeError("validator worker timed out and was terminated") from exc
+            finally:
+                with self._state_lock:
+                    if self._process is process:
+                        self._process = None
+        if process.returncode:
+            detail = stderr.strip() or stdout.strip()
+            raise RuntimeError(f"validator worker failed ({process.returncode}): {detail}")
+        lines = [line for line in stdout.splitlines() if line.startswith("QVL_ASR ")]
         if not lines:
             raise RuntimeError("validator worker returned no QVL_ASR result")
         payload = json.loads(lines[-1].removeprefix("QVL_ASR "))

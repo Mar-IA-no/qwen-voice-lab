@@ -24,6 +24,10 @@ There is deliberately no legacy parser in the render path. Convert an old file o
 qvl migrate-editorial old.md --output canonical.md --report migration.json
 ```
 
+The command refuses path collisions and existing outputs. Re-run with `--overwrite`
+only after inspecting the previous canonical file and transformation report; both
+replacement files are staged before they are installed.
+
 The migrator is best-effort. It removes known emphasis/direction glyphs and maps standalone `^` to `[1.2s]`; a human must review the result before creating a project.
 
 ## Durable pipeline
@@ -40,7 +44,7 @@ For every generated take the Lab records:
 
 Automatic generation stops after three attempts by default. A passing take is selected automatically; an exhausted, unavailable, or ambiguous result becomes `needs_review`. Manual takes have no display ceiling. Selecting a non-passing take requires a durable reason.
 
-The identity metric is intentionally advisory until a voice/language calibration exists. It can expose a register jump through per-window scores, but an uncalibrated number is not a valid rejection threshold. An operator can register evidence-backed median/minimum thresholds with `POST /api/voices/{voice_id}/identity-calibrations`; the notes field must identify the controlled calibration evidence. Only then can identity outliers trigger retries.
+The identity metric is intentionally advisory until a voice/language calibration exists for the exact scorer and frozen model SHA-256. It can expose a register jump through per-window scores, but an uncalibrated or provenance-mismatched number is not a valid rejection threshold. An operator can register evidence-backed median/minimum thresholds with `POST /api/voices/{voice_id}/identity-calibrations`; `validator`, `validator_model_sha256`, and a nonblank notes field are required. Only an exact provenance match can make identity outliers trigger retries.
 
 ## Preview and final assembly
 
@@ -65,9 +69,11 @@ QVL_VALIDATOR_COMMAND=/absolute/repo/validator/.venv/bin/python /absolute/repo/v
 QVL_QWEN_ASR_MODEL=/absolute/models/Qwen3-ASR-0.6B
 QVL_QWEN_ALIGNER_MODEL=/absolute/models/Qwen3-ForcedAligner-0.6B
 QVL_VALIDATOR_SPEAKER_MODEL=/absolute/models/spkrec-ecapa-voxceleb
+QVL_VALIDATOR_SPEAKER_MODEL_SHA256=<lowercase SHA-256 of the frozen speaker model>
+QVL_VALIDATOR_DEVICE=cuda:0
 ```
 
-On a shared GPU, `QVL_VALIDATOR_COMMAND` must use the same operator-controlled serial admission policy as TTS. The worker uses the official `Qwen3ASRModel.from_pretrained(..., forced_aligner=...)` and `transcribe(..., return_time_stamps=True)` API. A local SpeechBrain ECAPA model produces reference-vs-take speaker scores over overlapping voiced windows on CPU. Scores remain advisory until calibrated per voice/language. Audio remains local. The server refuses to enable validation without explicit worker and speaker-model paths.
+On a shared GPU, `QVL_VALIDATOR_COMMAND` must use the same operator-controlled serial admission policy as TTS. The configured `QVL_VALIDATOR_DEVICE` is sent to both ASR and ForcedAligner (and defaults to `QVL_DEVICE`); it is never hard-coded by the worker. The worker uses the official `Qwen3ASRModel.from_pretrained(..., forced_aligner=...)` and `transcribe(..., return_time_stamps=True)` API. A local SpeechBrain ECAPA model produces reference-vs-take speaker scores over overlapping voiced windows on CPU. Scores remain advisory until calibrated for the exact voice/language/scorer/model hash. Audio remains local. The server refuses to enable validation without explicit worker and speaker-model provenance.
 
 The current content gate retries when WER exceeds 0.12, token coverage is below 0.90, or prefix/suffix coverage is below 0.80. These are operational defaults, not universal perceptual truth; changes require regression evidence.
 

@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import __version__
 from .archive import list_archive_assets, resolve_archive_asset
+from .audio_pipeline import resolve_take_asset
 from .config import Settings, get_settings
 from .engine import QwenEngine, audio_info, sha256_file
 from .longform import LongFormManager
@@ -524,6 +525,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except KeyError as exc:
             raise HTTPException(404, "Project or segment not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.post(
         "/api/projects/{project_id}/segments/{segment_id}/takes/{take_id}/select",
@@ -544,9 +547,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         take = store.get_take(take_id)
         if not take:
             raise HTTPException(404, "Take not found.")
-        path = Path(take.raw_file if raw else take.trimmed_file).resolve()
-        if settings.projects_dir.resolve() not in path.parents or not path.is_file():
-            raise HTTPException(404, "Take audio is unavailable.")
+        try:
+            path = resolve_take_asset(take, settings.projects_dir, raw=raw)
+        except ValueError as exc:
+            raise HTTPException(404, "Take audio is unavailable.") from exc
         return FileResponse(path, media_type="audio/wav", content_disposition_type="inline")
 
     def create_assembly(project_id: str, kind: AssemblyKind, request: AssemblyRequest) -> Assembly:

@@ -66,7 +66,7 @@ class JobManager:
                 await self._sweeper
             except asyncio.CancelledError:
                 pass
-        self.engine.unload()
+        await asyncio.to_thread(self._unload_locked)
 
     async def submit_synthesis(self, request: SynthesisRequest) -> Job:
         voice = self.store.get_voice(request.voice_id)
@@ -201,9 +201,7 @@ class JobManager:
     async def _sweep_idle_model(self) -> None:
         while True:
             await asyncio.sleep(min(60, self.settings.model_idle_seconds))
-            await asyncio.to_thread(
-                self.engine.unload_if_idle, self.settings.model_idle_seconds
-            )
+            await asyncio.to_thread(self._unload_if_idle_locked, self.settings.model_idle_seconds)
 
     async def _execute(self, job_id: str) -> None:
         job = self.store.get_job(job_id)
@@ -273,3 +271,11 @@ class JobManager:
     def _render_design_locked(self, request, output, progress, cancelled):
         with self.engine_lock:
             return self.engine.render_design(request, output, progress, cancelled)
+
+    def _unload_locked(self) -> None:
+        with self.engine_lock:
+            self.engine.unload()
+
+    def _unload_if_idle_locked(self, idle_seconds: int) -> None:
+        with self.engine_lock:
+            self.engine.unload_if_idle(idle_seconds)

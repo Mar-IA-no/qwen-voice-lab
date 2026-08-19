@@ -11,12 +11,13 @@ def main() -> int:
     from speechbrain.inference.speaker import SpeakerRecognition
 
     payload = json.loads(sys.stdin.readline())
+    device = payload["device"]
     model = Qwen3ASRModel.from_pretrained(
         payload["asr_model"],
         forced_aligner=payload["aligner_model"],
         dtype=torch.bfloat16,
-        device_map="cuda:0",
-        forced_aligner_kwargs={"dtype": torch.bfloat16, "device_map": "cuda:0"},
+        device_map=device,
+        forced_aligner_kwargs={"dtype": torch.bfloat16, "device_map": device},
     )
     speaker = None
     if any(item.get("reference") for item in payload["items"]):
@@ -71,6 +72,7 @@ def main() -> int:
                 "detected_language": result.language,
                 "alignment": alignment,
                 "identity_validator": "speechbrain-ecapa-voxceleb-window-v1",
+                "identity_model_sha256": payload["speaker_model_sha256"],
                 "identity_scores": scores,
             }
         )
