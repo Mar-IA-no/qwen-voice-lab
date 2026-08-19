@@ -55,6 +55,7 @@ class LongFormManager:
         self.validator = ContentValidator(settings)
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
+        self._active_run_id: str | None = None
 
     async def start(self) -> None:
         for project in self.store.list_projects():
@@ -91,13 +92,22 @@ class LongFormManager:
         self._worker = asyncio.create_task(self._run(), name="qvl-long-form-worker")
 
     async def stop(self) -> None:
+        cleanup_error: Exception | None = None
         if self._worker:
+            had_active_run = self._active_run_id is not None
             self._worker.cancel()
+            if had_active_run and (cancel_active := getattr(self.engine, "cancel_active", None)):
+                try:
+                    await asyncio.to_thread(cancel_active)
+                except Exception as exc:
+                    cleanup_error = exc
             try:
                 await self._worker
             except asyncio.CancelledError:
                 pass
         self.validator.close()
+        if cleanup_error:
+            raise RuntimeError("active long-form GPU worker cleanup failed") from cleanup_error
 
     def create_project(self, request: ProjectCreate) -> ProjectDetail:
         if not self.store.get_voice(request.voice_id):
@@ -115,11 +125,9 @@ class LongFormManager:
 
     def add_revision(self, project_id: str, request: RevisionCreate) -> ProjectDetail:
         project = self._project(project_id)
-        if any(
-            run.status in {RunStatus.QUEUED, RunStatus.RUNNING}
-            for run in self.store.list_runs(project_id)
-        ):
-            raise ValueError("wait for the active project run before saving a revision")
+        expected_current_revision_id = project.current_revision_id
+        if not expected_current_revision_id:
+            raise ValueError("project has no current revision")
         blocks = compile_markdown(request.markdown)
         revisions = self.store.list_revisions(project_id)
         previous = (
@@ -127,10 +135,24 @@ class LongFormManager:
             if project.current_revision_id
             else []
         )
-        return self._persist_revision(project, request.markdown, blocks, previous, revisions)
+        return self._persist_revision(
+            project,
+            request.markdown,
+            blocks,
+            previous,
+            revisions,
+            expected_current_revision_id=expected_current_revision_id,
+        )
 
     def _persist_revision(
-        self, project: Project, markdown: str, blocks, previous, revisions
+        self,
+        project: Project,
+        markdown: str,
+        blocks,
+        previous,
+        revisions,
+        *,
+        expected_current_revision_id: str | None = None,
     ) -> ProjectDetail:
         revision = SourceRevision(
             id=new_id("revision"),
@@ -147,7 +169,15 @@ class LongFormManager:
             else ProjectStatus.DRAFT
         )
         project.updated_at = utc_now()
-        self.store.save_project_revision(project, revision, segments)
+        if expected_current_revision_id is None:
+            self.store.save_project_revision(project, revision, segments)
+        else:
+            self.store.save_project_revision_if_idle(
+                project,
+                revision,
+                segments,
+                expected_current_revision_id,
+            )
         return ProjectDetail(**project.model_dump(), revision=revision, segments=segments)
 
     def get_project(self, project_id: str) -> ProjectDetail:
@@ -310,9 +340,11 @@ class LongFormManager:
     async def _run(self) -> None:
         while True:
             run_id = await self.queue.get()
+            self._active_run_id = run_id
             try:
                 await self._execute_run(run_id)
             finally:
+                self._active_run_id = None
                 self.queue.task_done()
 
     async def _execute_run(self, run_id: str) -> None:
@@ -467,6 +499,10 @@ class LongFormManager:
                             take.status = TakeStatus.NEEDS_REVIEW
                             self.store.save_take(take)
             run.status = RunStatus.NEEDS_REVIEW if needs_review else RunStatus.COMPLETE
+        except asyncio.CancelledError:
+            run.status = RunStatus.FAILED
+            run.error = "The process stopped before this run completed."
+            raise
         except Exception as exc:
             run.status = RunStatus.FAILED
             run.error = f"{type(exc).__name__}: {exc}"

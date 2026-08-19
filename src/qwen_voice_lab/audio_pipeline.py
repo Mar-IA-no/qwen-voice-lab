@@ -14,45 +14,64 @@ from .engine import sha256_file, write_wav
 from .models import ProjectSegment, Take
 
 
-def read_take_asset(take: Take, projects_root: Path, *, raw: bool = False) -> tuple[bytes, str]:
-    """Read, authenticate, and return the exact immutable bytes a caller will consume."""
-    configured = Path(take.raw_file if raw else take.trimmed_file)
+def read_project_asset(
+    configured: Path,
+    expected_sha256: str,
+    projects_root: Path,
+    project_id: str,
+    *,
+    label: str,
+) -> tuple[bytes, str]:
+    """Read one project asset through a no-follow descriptor and authenticate its bytes."""
     lexical_root = projects_root.absolute()
+    lexical_project = (projects_root / project_id).absolute()
     lexical_path = configured.absolute()
-    if lexical_root != lexical_path.parent and lexical_root not in lexical_path.parents:
-        raise ValueError("take audio is outside the projects directory")
+    if lexical_project != lexical_path.parent and lexical_project not in lexical_path.parents:
+        raise ValueError(f"{label} is outside its project directory")
     cursor = lexical_root
     for component in lexical_path.relative_to(lexical_root).parts:
         cursor /= component
         if cursor.is_symlink():
-            raise ValueError("take audio path must not contain symbolic links")
+            raise ValueError(f"{label} path must not contain symbolic links")
     try:
         path = configured.resolve(strict=True)
-        allowed = (projects_root / take.project_id).resolve(strict=True)
+        allowed = (projects_root / project_id).resolve(strict=True)
     except FileNotFoundError as exc:
-        raise ValueError("take audio is unavailable") from exc
+        raise ValueError(f"{label} is unavailable") from exc
     if allowed != path.parent and allowed not in path.parents:
-        raise ValueError("take audio is outside its project directory")
+        raise ValueError(f"{label} is outside its project directory")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(configured, flags)
     except OSError as exc:
-        raise ValueError("take audio could not be opened safely") from exc
+        raise ValueError(f"{label} could not be opened safely") from exc
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("take audio is not a regular file")
+            raise ValueError(f"{label} is not a regular file")
         chunks = []
         while chunk := os.read(descriptor, 1024 * 1024):
             chunks.append(chunk)
         data = b"".join(chunks)
     finally:
         os.close(descriptor)
-    expected = take.raw_sha256 if raw else take.trimmed_sha256
     current_sha256 = hashlib.sha256(data).hexdigest()
-    if current_sha256 != expected:
-        raise ValueError("take audio SHA-256 does not match its immutable record")
+    if current_sha256 != expected_sha256:
+        raise ValueError(f"{label} SHA-256 does not match its immutable record")
     return data, current_sha256
+
+
+def read_take_asset(take: Take, projects_root: Path, *, raw: bool = False) -> tuple[bytes, str]:
+    """Read, authenticate, and return the exact immutable bytes a caller will consume."""
+    configured = Path(take.raw_file if raw else take.trimmed_file)
+    expected = take.raw_sha256 if raw else take.trimmed_sha256
+    return read_project_asset(
+        configured,
+        expected,
+        projects_root,
+        take.project_id,
+        label="take audio",
+    )
 
 
 def trim_speech_edges(

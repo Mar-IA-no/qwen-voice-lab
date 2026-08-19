@@ -35,6 +35,8 @@ The migrator is best-effort. It removes known emphasis/direction glyphs and maps
 
 Each source save creates an immutable revision. Exact unchanged speech keeps its stable segment ID and selected take; a pause-only revision therefore needs no TTS. Punctuation or spoken-text edits invalidate only the affected selection.
 
+Saving a revision and creating a run are mutually exclusive inside SQLite. A queued or running project rejects a new revision, while a run whose source pointer became stale is rejected before it enters the queue. Shutdown marks an interrupted active run failed before GPU-worker and model cleanup continue; startup remains the recovery floor for an abrupt process loss.
+
 For every generated take the Lab records:
 
 - raw and non-destructively trimmed WAVs plus SHA-256;
@@ -51,7 +53,7 @@ The identity metric is intentionally advisory until a voice/language calibration
 
 Preview is button-triggered and CPU-only. It concatenates selected trimmed takes and inserts sample-exact zero-valued pauses compiled from the current source. Raw takes are never modified. Final uses the same timeline builder, writes an immutable JSON manifest, then transcribes the full WAV to check ordered coverage and the ending. A failed or unavailable final audit needs review; approval by override requires a reason and creates a new immutable assembly.
 
-Each take is opened once with no-follow semantics and copied into an authenticated in-memory snapshot. Its SHA-256 is verified over those exact bytes, and decoding or HTTP serving consumes that same snapshot. A mutable path is never reopened after verification.
+Each take and finished assembly asset is opened once with no-follow semantics and copied into an authenticated in-memory snapshot. Its SHA-256 is verified over those exact bytes, and decoding or HTTP serving consumes that same snapshot. A mutable path is never reopened after verification, and altered WAV or manifest bytes fail closed.
 
 Project audio lives below `data/projects/<project_id>/`. Back up the SQLite database and the complete `data/projects/` tree together; either one alone is insufficient for recovery.
 

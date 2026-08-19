@@ -17,7 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import __version__
 from .archive import list_archive_assets, resolve_archive_asset
-from .audio_pipeline import read_take_asset
+from .audio_pipeline import read_project_asset, read_take_asset
 from .config import Settings, get_settings
 from .engine import QwenEngine, audio_info, sha256_file
 from .longform import LongFormManager
@@ -107,10 +107,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await manager.start()
-        await projects.start()
-        yield
-        await projects.stop()
-        await manager.stop()
+        try:
+            await projects.start()
+            yield
+        finally:
+            try:
+                await projects.stop()
+            finally:
+                await manager.stop()
 
     app = FastAPI(
         title="Qwen Voice Lab",
@@ -583,34 +587,85 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "Project not found.")
         return store.list_assemblies(project_id)
 
-    def assembly_asset(assembly_id: str, field: str) -> tuple[Assembly, Path]:
+    def assembly_asset(assembly_id: str, field: str) -> tuple[Assembly, bytes]:
         assembly = store.get_assembly(assembly_id)
         if not assembly:
             raise HTTPException(404, "Assembly not found.")
-        path = Path(getattr(assembly, field)).resolve()
-        if settings.projects_dir.resolve() not in path.parents or not path.is_file():
-            raise HTTPException(404, "Assembly asset is unavailable.")
-        return assembly, path
+        expected_sha256 = (
+            assembly.output_sha256 if field == "output_file" else assembly.manifest_sha256
+        )
+        try:
+            content, _ = read_project_asset(
+                Path(getattr(assembly, field)),
+                expected_sha256,
+                settings.projects_dir,
+                assembly.project_id,
+                label="assembly asset",
+            )
+        except ValueError as exc:
+            raise HTTPException(404, "Assembly asset is unavailable.") from exc
+        return assembly, content
+
+    def authenticated_audio_response(
+        request: Request, content: bytes, *, filename: str | None = None
+    ) -> Response:
+        headers = {"Accept-Ranges": "bytes"}
+        if filename:
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        requested_range = request.headers.get("range")
+        if not requested_range:
+            return Response(content=content, media_type="audio/wav", headers=headers)
+        match = re.fullmatch(r"bytes=(\d*)-(\d*)", requested_range.strip())
+        size = len(content)
+        if not match or not size:
+            return Response(
+                status_code=416,
+                headers={**headers, "Content-Range": f"bytes */{size}"},
+            )
+        start_text, end_text = match.groups()
+        if not start_text:
+            suffix = int(end_text or "0")
+            if suffix <= 0:
+                return Response(
+                    status_code=416,
+                    headers={**headers, "Content-Range": f"bytes */{size}"},
+                )
+            start = max(0, size - suffix)
+            end = size - 1
+        else:
+            start = int(start_text)
+            end = min(int(end_text), size - 1) if end_text else size - 1
+            if start >= size or end < start:
+                return Response(
+                    status_code=416,
+                    headers={**headers, "Content-Range": f"bytes */{size}"},
+                )
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return Response(
+            content=content[start : end + 1],
+            status_code=206,
+            media_type="audio/wav",
+            headers=headers,
+        )
 
     @app.get("/api/assemblies/{assembly_id}/audio")
-    def assembly_audio(assembly_id: str) -> FileResponse:
-        _, path = assembly_asset(assembly_id, "output_file")
-        return FileResponse(path, media_type="audio/wav", content_disposition_type="inline")
+    def assembly_audio(assembly_id: str, request: Request) -> Response:
+        _, content = assembly_asset(assembly_id, "output_file")
+        return authenticated_audio_response(request, content)
 
     @app.get("/api/assemblies/{assembly_id}/download")
-    def assembly_download(assembly_id: str) -> FileResponse:
-        assembly, path = assembly_asset(assembly_id, "output_file")
-        return FileResponse(
-            path,
-            media_type="audio/wav",
+    def assembly_download(assembly_id: str, request: Request) -> Response:
+        assembly, content = assembly_asset(assembly_id, "output_file")
+        return authenticated_audio_response(
+            request,
+            content,
             filename=f"{assembly.project_id}-{assembly.kind}.wav",
-            content_disposition_type="attachment",
         )
 
     @app.get("/api/assemblies/{assembly_id}/manifest")
-    def assembly_manifest(assembly_id: str) -> FileResponse:
-        _, path = assembly_asset(assembly_id, "manifest_file")
-        return FileResponse(path, media_type="application/json")
+    def assembly_manifest(assembly_id: str) -> Response:
+        _, content = assembly_asset(assembly_id, "manifest_file")
+        return Response(content=content, media_type="application/json")
 
     source_frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     packaged_frontend = Path(__file__).resolve().parent / "static"

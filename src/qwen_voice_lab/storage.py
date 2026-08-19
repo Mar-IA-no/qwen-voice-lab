@@ -226,8 +226,49 @@ class Store:
         self, project: Project, revision: SourceRevision, segments: list[ProjectSegment]
     ) -> None:
         """Persist a source revision and its project pointer as one transaction."""
+        self._save_project_revision(project, revision, segments)
+
+    def save_project_revision_if_idle(
+        self,
+        project: Project,
+        revision: SourceRevision,
+        segments: list[ProjectSegment],
+        expected_current_revision_id: str,
+    ) -> None:
+        """Persist a revision only if its source pointer is current and no run is active."""
+        self._save_project_revision(
+            project,
+            revision,
+            segments,
+            expected_current_revision_id=expected_current_revision_id,
+        )
+
+    def _save_project_revision(
+        self,
+        project: Project,
+        revision: SourceRevision,
+        segments: list[ProjectSegment],
+        *,
+        expected_current_revision_id: str | None = None,
+    ) -> None:
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if expected_current_revision_id is not None:
+                row = connection.execute(
+                    "SELECT payload FROM projects WHERE id = ?", (project.id,)
+                ).fetchone()
+                if not row:
+                    raise ValueError("project disappeared before the revision could be saved")
+                current = Project.model_validate_json(row[0])
+                if current.current_revision_id != expected_current_revision_id:
+                    raise ValueError("project revision changed; reload before saving")
+                active = connection.execute(
+                    "SELECT id FROM project_runs "
+                    "WHERE project_id = ? AND status IN (?, ?) LIMIT 1",
+                    (project.id, "queued", "running"),
+                ).fetchone()
+                if active:
+                    raise ValueError("wait for the active project run before saving a revision")
             connection.execute(
                 "INSERT INTO projects(id, created_at, updated_at, payload) VALUES(?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, "
@@ -357,7 +398,7 @@ class Store:
             )
 
     def create_run_if_idle(self, run: ProjectRun) -> ProjectRun:
-        """Atomically reject a second active run for the same project."""
+        """Atomically reject stale-revision and duplicate active runs."""
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             active = connection.execute(
@@ -366,6 +407,14 @@ class Store:
             ).fetchone()
             if active:
                 raise ValueError(f"project already has an active run: {active[0]}")
+            project_row = connection.execute(
+                "SELECT payload FROM projects WHERE id = ?", (run.project_id,)
+            ).fetchone()
+            if not project_row:
+                raise ValueError("project disappeared before the run could be queued")
+            project = Project.model_validate_json(project_row[0])
+            if project.current_revision_id != run.revision_id:
+                raise ValueError("project revision changed; reload before starting a run")
             connection.execute(
                 "INSERT INTO project_runs(id, project_id, created_at, status, payload) "
                 "VALUES(?, ?, ?, ?, ?)",

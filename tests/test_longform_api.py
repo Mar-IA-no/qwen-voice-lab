@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -15,7 +17,13 @@ from qwen_voice_lab import audio_pipeline
 from qwen_voice_lab.app import create_app
 from qwen_voice_lab.config import Settings
 from qwen_voice_lab.longform import deterministic_seed
-from qwen_voice_lab.models import ProjectRun, ProjectStatus, QualityReport, RunStatus
+from qwen_voice_lab.models import (
+    ProjectRun,
+    ProjectStatus,
+    QualityReport,
+    RevisionCreate,
+    RunStatus,
+)
 from qwen_voice_lab.quality import (
     MOCK_IDENTITY_MODEL_SHA256,
     MOCK_IDENTITY_VALIDATOR,
@@ -118,6 +126,13 @@ def test_project_pipeline_persists_takes_qc_exact_pauses_and_final_audit(
         assert final["audit_status"] == "pass"
         assert final["audit"]["wer"] == 0
         assert client.get(f"/api/assemblies/{final['id']}/download").status_code == 200
+        partial = client.get(
+            f"/api/assemblies/{final['id']}/audio", headers={"Range": "bytes=0-99"}
+        )
+        assert partial.status_code == 206
+        assert len(partial.content) == 100
+        assert partial.headers["content-range"].startswith("bytes 0-99/")
+        assert partial.headers["accept-ranges"] == "bytes"
 
         manual = client.post(f"/api/projects/{project['id']}/segments/{first['id']}/takes").json()
         assert wait_run(client, manual["id"])["status"] == "complete"
@@ -276,6 +291,153 @@ def test_duplicate_active_run_is_rejected_atomically(tmp_path: Path) -> None:
         assert len(client.app.state.store.list_runs(project["id"])) == 1
 
 
+def test_run_creation_rejects_a_revision_that_became_stale(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        stale_run = ProjectRun(
+            id="run_stale_revision",
+            project_id=project["id"],
+            revision_id=project["revision"]["id"],
+            segment_ids=[project["segments"][0]["id"]],
+        )
+        revised = client.post(
+            f"/api/projects/{project['id']}/revisions",
+            json={"markdown": "Testo completamente cambiato.\n"},
+        )
+        assert revised.status_code == 201
+
+        with pytest.raises(ValueError, match="project revision changed"):
+            client.app.state.store.create_run_if_idle(stale_run)
+        assert client.app.state.store.list_runs(project["id"]) == []
+        assert (
+            client.get(f"/api/projects/{project['id']}").json()["revision"]["id"]
+            == revised.json()["revision"]["id"]
+        )
+
+
+def test_revision_transaction_rejects_an_active_run(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        blocker = ProjectRun(
+            id="run_revision_blocker",
+            project_id=project["id"],
+            revision_id=project["revision"]["id"],
+            segment_ids=[project["segments"][0]["id"]],
+        )
+        client.app.state.store.create_run_if_idle(blocker)
+
+        response = client.post(
+            f"/api/projects/{project['id']}/revisions",
+            json={"markdown": "Testo completamente cambiato.\n"},
+        )
+        assert response.status_code == 422
+        detail = client.get(f"/api/projects/{project['id']}").json()
+        assert detail["revision"]["id"] == project["revision"]["id"]
+        assert len(client.app.state.store.list_revisions(project["id"])) == 1
+
+
+def test_revision_save_and_run_creation_are_one_atomic_exclusion_boundary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        store = client.app.state.store
+        manager = client.app.state.projects
+        stale_run = ProjectRun(
+            id="run_atomic_race",
+            project_id=project["id"],
+            revision_id=project["revision"]["id"],
+            segment_ids=[project["segments"][0]["id"]],
+        )
+        barrier = threading.Barrier(2)
+        original_revision_save = store.save_project_revision_if_idle
+        original_run_create = store.create_run_if_idle
+
+        def synchronized_revision_save(*args, **kwargs):
+            barrier.wait(timeout=2)
+            return original_revision_save(*args, **kwargs)
+
+        def synchronized_run_create(*args, **kwargs):
+            barrier.wait(timeout=2)
+            return original_run_create(*args, **kwargs)
+
+        monkeypatch.setattr(store, "save_project_revision_if_idle", synchronized_revision_save)
+        monkeypatch.setattr(store, "create_run_if_idle", synchronized_run_create)
+        successes: list[str] = []
+        failures: list[Exception] = []
+
+        def save_revision() -> None:
+            try:
+                manager.add_revision(
+                    project["id"], RevisionCreate(markdown="Testo completamente cambiato.\n")
+                )
+                successes.append("revision")
+            except Exception as exc:
+                failures.append(exc)
+
+        def create_run() -> None:
+            try:
+                store.create_run_if_idle(stale_run)
+                successes.append("run")
+            except Exception as exc:
+                failures.append(exc)
+
+        revision_thread = threading.Thread(target=save_revision)
+        run_thread = threading.Thread(target=create_run)
+        revision_thread.start()
+        run_thread.start()
+        revision_thread.join(timeout=3)
+        run_thread.join(timeout=3)
+        assert not revision_thread.is_alive()
+        assert not run_thread.is_alive()
+        assert len(successes) == 1
+        assert len(failures) == 1
+
+        detail = manager.get_project(project["id"])
+        runs = store.list_runs(project["id"])
+        if successes == ["revision"]:
+            assert detail.revision.id != project["revision"]["id"]
+            assert runs == []
+            assert "revision changed" in str(failures[0])
+        else:
+            assert detail.revision.id == project["revision"]["id"]
+            assert [row.id for row in runs] == [stale_run.id]
+            assert "active project run" in str(failures[0])
+
+
+def test_shutdown_marks_an_active_long_form_run_failed(tmp_path: Path) -> None:
+    client = client_for(tmp_path)
+    worker_cancelled = False
+
+    async def blocked_render(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    def cancel_active() -> None:
+        nonlocal worker_cancelled
+        worker_cancelled = True
+
+    client.app.state.projects._render_take = blocked_render
+    client.app.state.projects.engine.cancel_active = cancel_active
+    with client as active:
+        project = create_project(active)
+        run = active.post(f"/api/projects/{project['id']}/runs").json()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            persisted = client.app.state.store.get_run(run["id"])
+            if persisted and persisted.status == RunStatus.RUNNING:
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("project run did not start")
+
+    persisted = client.app.state.store.get_run(run["id"])
+    assert persisted is not None
+    assert persisted.status == RunStatus.FAILED
+    assert persisted.error == "The process stopped before this run completed."
+    assert worker_cancelled is True
+    assert client.app.state.store.get_project(project["id"]).status == ProjectStatus.NEEDS_REVIEW
+
+
 def test_take_assets_fail_closed_after_tamper_or_symlink(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         project = create_project(client)
@@ -298,6 +460,27 @@ def test_take_assets_fail_closed_after_tamper_or_symlink(tmp_path: Path) -> None
         os.symlink(outside, speech)
         assert client.get(f"/api/takes/{take_id}/audio").status_code == 404
         assert client.post(f"/api/projects/{project['id']}/preview", json={}).status_code == 409
+
+
+def test_assembly_assets_fail_closed_after_tamper(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        run = client.post(f"/api/projects/{project['id']}/runs").json()
+        assert wait_run(client, run["id"])["status"] == "complete"
+        assembly = client.post(f"/api/projects/{project['id']}/preview", json={}).json()
+        persisted = client.app.state.store.get_assembly(assembly["id"])
+        assert persisted is not None
+
+        output = Path(persisted.output_file)
+        original_output = output.read_bytes()
+        output.write_bytes(original_output + b"tampered")
+        assert client.get(f"/api/assemblies/{assembly['id']}/audio").status_code == 404
+        assert client.get(f"/api/assemblies/{assembly['id']}/download").status_code == 404
+
+        output.write_bytes(original_output)
+        manifest = Path(persisted.manifest_file)
+        manifest.write_bytes(manifest.read_bytes() + b"tampered")
+        assert client.get(f"/api/assemblies/{assembly['id']}/manifest").status_code == 404
 
 
 def test_assembly_decodes_the_same_authenticated_bytes_it_certifies(
