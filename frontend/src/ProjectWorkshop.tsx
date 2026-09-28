@@ -118,8 +118,10 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
   }
   const switchProject = (id: string) => {
     if (busy) return
+    if (id === selectedId && !creating) return
     if (dirty && !window.confirm('Descartar cambios sin guardar?')) return
     current.current = id
+    setDetail(null)
     setSelectedId(id)
     setCreating(false)
   }
@@ -205,7 +207,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
     <aside className="panel project-list"><div className="panel-heading compact"><div><span className="kicker">LONG FORM</span><h2>Proyectos</h2></div><button type="button" className="icon-button" title="Nuevo proyecto" disabled={busy} onClick={startCreate}><Plus size={17} /></button></div>
       {projects.map((project) => <button type="button" key={project.id} disabled={busy} className={selectedId === project.id && !creating ? 'active' : ''} onClick={() => switchProject(project.id)}><span><strong>{project.title}</strong><small>{project.language.toUpperCase()} · {project.status}</small></span></button>)}
     </aside>
-    {creating || !detail ? <form className="project-workspace" onSubmit={create}><section className="panel project-editor">
+    {!creating && !detail ? <div className="project-workspace"><section className="panel project-editor" role="status">Cargando proyecto…</section></div> : creating ? <form className="project-workspace" onSubmit={create}><section className="panel project-editor">
       <div className="panel-heading"><div><span className="kicker">NEW PROJECT</span><h2>Nuevo proyecto</h2></div></div>
       <fieldset className="workshop-fields" disabled={busy}>
       <div className="field-grid two"><label><span>Nombre</span><input required value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} /></label><label><span>Voz</span><select required value={meta.voice_id} onChange={(e) => setMeta({ ...meta, voice_id: e.target.value })}>{voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}</select></label></div>
@@ -214,7 +216,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
       {legacy ? <label><span>Markdown legado</span><textarea rows={10} value={markdown} onChange={(e) => setMarkdown(e.target.value)} /><input type="file" accept=".md,text/markdown,text/plain" onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(setMarkdown) }} /></label> : <><TimingControls draft={draft} edit={edit} /><BlockEditor blocks={draft.blocks} speechSpeed={draft.speech_speed} patchBlock={patchBlock} moveBlock={moveBlock} edit={edit} /></>}
       <button className="primary-button" disabled={busy || !meta.voice_id}><Plus size={16} /> Crear proyecto</button>
       </fieldset>
-    </section></form> : <div className="project-workspace">
+    </section></form> : detail ? <div className="project-workspace">
       <section className="panel project-editor"><div className="panel-heading"><div><span className="kicker">REVISION {detail.revision?.number ?? '—'}</span><h2>{detail.title}</h2></div><span className="workshop-state">{stale ? 'Desactualizada' : dirty ? 'Sin guardar' : 'Guardada'}</span></div>
         {stale && <div className="warning-box" role="alert">Hay una revisión más reciente. Tu borrador no se ha sobrescrito. <button type="button" className="soft-button" disabled={busy} onClick={() => void reloadLatest()}><RefreshCw size={14} /> Cargar última</button></div>}
         <fieldset className="workshop-fields" disabled={busy}>
@@ -235,7 +237,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
         <div className="take-strip">{(takes[segment.id] ?? []).map((take) => <div className={take.selected ? 'take-card selected' : 'take-card'} key={take.id}><div><strong>Toma {take.attempt} {take.selected ? '· seleccionada' : ''}</strong><small>{take.status} · seed {take.seed}</small></div><label className="workshop-raw"><span>Original raw · sin ajustes de tiempo</span><audio controls preload="none" src={`/api/takes/${take.id}/audio?raw=true`} /></label><div className="qc-chips">{take.quality_reports.map((qc) => <span key={qc.id} className={qc.verdict} title={qc.reasons.join(' · ')}>{qc.validator.split('-')[0]} · {qc.verdict}</span>)}</div><div className="take-actions"><a className="download-button" href={`/api/takes/${take.id}/download?raw=true`} download><Download size={14} /> Raw</a>{!take.selected && <button type="button" className="soft-button" disabled={!canOperate} onClick={() => { const override = take.status !== 'pass'; const reason = override ? window.prompt('Motivo del override:') ?? '' : undefined; if (override && !reason) return; setAudition(null); void execute(() => api.selectTake(detail.id, segment.id, take.id, revisionId!, override, reason), 'Toma seleccionada.', true) }}>Elegir</button>}</div></div>)}</div>
       </article>)}</section>
       {(audition || currentPreview || currentFinal) && <section className="panel workshop-output"><div className="panel-heading compact"><div><span className="kicker">AUDITION</span><h2>Escucha ajustada</h2></div></div>{(dirty || stale || (!!audition && audition.revision_id !== revisionId)) && <p className="workshop-audio-state">Audio de una revisión guardada; los cambios actuales aún no están en el audio.</p>}<div className="workshop-output-list">{audition && <WorkshopPlayer key={audition.id} label={audition.segment_id ? 'Bloque ajustado' : 'Preview completo'} src={`/api/assemblies/${audition.id}/audio`} beacon={audition.revision_id === revisionId ? savedBeacon : undefined} beaconSrc={beaconSrc} />}{!audition && currentPreview && <WorkshopPlayer key={currentPreview.id} label="Preview completo" src={`/api/assemblies/${currentPreview.id}/audio`} beacon={savedBeacon} beaconSrc={beaconSrc} />}</div><div className="workshop-downloads">{currentPreview && <a className="download-button" href={`/api/assemblies/${currentPreview.id}/bundle`} download><Download size={15} /> Bundle CPU · WAV + partitura</a>}{currentFinal && <a className="download-button" href={`/api/assemblies/${currentFinal.id}/download`} download><Download size={15} /> Final validado · {currentFinal.audit_status}</a>}</div></section>}
-    </div>}
+    </div> : null}
   </div>
 }
 
