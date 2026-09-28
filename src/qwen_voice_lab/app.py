@@ -41,6 +41,7 @@ from .models import (
     Project,
     ProjectCreate,
     ProjectDetail,
+    ProjectHandoffRequest,
     ProjectRun,
     RevisionCreate,
     RevisionRestore,
@@ -229,6 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpu_worker_reason=worker_reason,
             local_validator_enabled=settings.validator_enabled,
             validator_models=[settings.qwen_asr_model, settings.qwen_aligner_model],
+            codex_chat_url=settings.codex_chat_url or None,
         )
 
     @app.get("/api/archive", response_model=list[ArchiveAsset])
@@ -478,6 +480,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return projects.get_project(project_id)
         except KeyError as exc:
             raise HTTPException(404, "Project not found.") from exc
+
+    @app.post("/api/projects/{project_id}/handoff", response_model=ProjectDetail)
+    def mark_project_handoff(project_id: str, request: ProjectHandoffRequest) -> ProjectDetail:
+        try:
+            store.mark_project_handoff(project_id, request.expected_revision_id)
+            return projects.get_project(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/handoff/bundle")
+    def download_project_handoff(project_id: str) -> Response:
+        try:
+            content = projects.handoff_bundle(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "No marked score for this project.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return Response(
+            content=content, media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="qvl-handoff-{project_id}.zip"'},
+        )
 
     @app.post("/api/projects/{project_id}/revisions", response_model=ProjectDetail, status_code=201)
     def create_revision(project_id: str, request: RevisionCreate) -> ProjectDetail:

@@ -14,6 +14,7 @@ from .models import (
     IdentityCalibration,
     Job,
     Project,
+    ProjectHandoff,
     ProjectRun,
     ProjectSegment,
     QualityReport,
@@ -22,6 +23,7 @@ from .models import (
     Take,
     Voice,
     VoiceView,
+    utc_now,
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -262,6 +264,7 @@ class Store:
                 current = Project.model_validate_json(row[0])
                 if current.current_revision_id != expected_current_revision_id:
                     raise ValueError("project revision changed; reload before saving")
+                project.handoff = current.handoff
                 active = connection.execute(
                     "SELECT id FROM project_runs "
                     "WHERE project_id = ? AND status IN (?, ?) LIMIT 1",
@@ -297,6 +300,49 @@ class Store:
 
     def get_project(self, project_id: str) -> Project | None:
         return self._get_payload("projects", project_id, Project)
+
+    def mark_project_handoff(self, project_id: str, expected_revision_id: str) -> Project:
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT payload FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not row:
+                raise KeyError(project_id)
+            project = Project.model_validate_json(row[0])
+            if project.current_revision_id != expected_revision_id:
+                raise ValueError("project revision changed; reload before marking it")
+            active = connection.execute(
+                "SELECT id FROM project_runs WHERE project_id = ? AND status IN (?, ?) LIMIT 1",
+                (project_id, "queued", "running"),
+            ).fetchone()
+            if active:
+                raise ValueError("wait for the active project run before marking a revision")
+            revision_row = connection.execute(
+                "SELECT payload FROM source_revisions WHERE id = ? AND project_id = ?",
+                (expected_revision_id, project_id),
+            ).fetchone()
+            if not revision_row:
+                raise ValueError("project revision is unavailable")
+            revision = SourceRevision.model_validate_json(revision_row[0])
+            segment_rows = connection.execute(
+                "SELECT payload FROM project_segments WHERE revision_id = ? ORDER BY position",
+                (expected_revision_id,),
+            ).fetchall()
+            segments = [ProjectSegment.model_validate_json(item[0]) for item in segment_rows]
+            project.handoff = ProjectHandoff(
+                revision_id=revision.id,
+                revision_number=revision.number,
+                source_sha256=revision.source_sha256,
+                selected_take_ids={
+                    segment.id: segment.selected_take_id
+                    for segment in segments if segment.selected_take_id
+                },
+            )
+            project.updated_at = utc_now()
+            connection.execute(
+                "UPDATE projects SET updated_at = ?, payload = ? WHERE id = ?",
+                (project.updated_at, self._payload(project), project_id),
+            )
+        return project
 
     def list_projects(self) -> list[Project]:
         return self._list_payloads("projects", Project, "updated_at DESC")

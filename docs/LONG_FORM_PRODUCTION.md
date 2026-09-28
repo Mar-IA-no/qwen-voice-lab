@@ -57,6 +57,8 @@ Preview is button-triggered and CPU-only. It concatenates selected trimmed takes
 
 The preview can target a complete revision or one block. The full preview downloads as a ZIP with the speech WAV, a timing manifest, and the score in Markdown and JSON. A partial preview cannot be downloaded as a complete score. Beacon is a separate local track in the browser, with shared play/pause/seek, an adjustable offset and volume, a three-second fade-in, and a short loop crossfade. It is not mixed into the exported speech WAV.
 
+The editor can mark the current saved revision for handoff without requiring every block to have a take. This snapshots the revision and its selected take IDs. The handoff ZIP contains the score, a manifest naming any missing blocks, and the selected raw and trimmed WAV files. Later revisions do not change the marked handoff. Marking or exporting does not publish anything to Psicopompo.
+
 Each take and finished assembly asset is opened once with no-follow semantics and copied into an authenticated in-memory snapshot. Its SHA-256 is verified over those exact bytes, and decoding or HTTP serving consumes that same snapshot. A mutable path is never reopened after verification, and altered WAV or manifest bytes fail closed.
 
 Project audio lives below `data/projects/<project_id>/`. Back up the SQLite database and the complete `data/projects/` tree together; either one alone is insufficient for recovery.

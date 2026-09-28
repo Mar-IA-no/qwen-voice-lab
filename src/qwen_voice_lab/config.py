@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     access_token: str = ""
     allow_unauthenticated_remote: bool = False
     cookie_secure: bool = False
+    codex_chat_url: str = ""
 
     max_upload_mib: int = Field(default=50, ge=1, le=500)
     max_text_chars: int = Field(default=12_000, ge=100, le=100_000)

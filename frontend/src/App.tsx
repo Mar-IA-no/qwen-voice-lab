@@ -14,6 +14,7 @@ import {
   Gauge,
   GitCompareArrows,
   Library,
+  MessageCircle,
   Mic2,
   Plus,
   RefreshCw,
@@ -75,6 +76,9 @@ function App() {
   const [archive, setArchive] = useState<ArchiveAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantLoaded, setAssistantLoaded] = useState(false)
+  const assistantUrl = capabilities?.codex_chat_url
 
   const refresh = useCallback(async (quiet = false) => {
     try {
@@ -111,6 +115,13 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
+  useEffect(() => {
+    if (!assistantOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previous }
+  }, [assistantOpen])
+
   const notify = (kind: 'ok' | 'error', text: string) => setToast({ kind, text })
   const activeJobs = jobs.filter((job) => job.status === 'running' || job.status === 'queued')
 
@@ -132,6 +143,9 @@ function App() {
             <h1>{pageTitle(view)}</h1>
           </div>
           <div className="topbar-actions">
+            {assistantUrl && <button type="button" className={`soft-button assistant-trigger${assistantOpen ? ' active' : ''}`} onClick={() => { setAssistantLoaded(true); setAssistantOpen((open) => !open) }} aria-expanded={assistantOpen} aria-controls="voice-lab-assistant" title="Abrir el asistente de Codex">
+              <MessageCircle size={17} /> <span>Asistente</span>
+            </button>}
             <button className="icon-button" onClick={() => void refresh()} title="Actualizar">
               <RefreshCw size={17} />
             </button>
@@ -159,6 +173,10 @@ function App() {
           </div>
         )}
       </main>
+      {assistantLoaded && assistantUrl && <section id="voice-lab-assistant" className="assistant-drawer" aria-label="Asistente de Qwen Voice Lab" hidden={!assistantOpen}>
+        <div className="assistant-drawer-header"><div><span className="kicker">QWEN VOICE LAB</span><h2>Asistente</h2></div><button type="button" className="icon-button" onClick={() => setAssistantOpen(false)} aria-label="Cerrar asistente" title="Cerrar asistente"><X size={18} /></button></div>
+        <iframe title="Chat con Codex para Qwen Voice Lab" src={assistantUrl} />
+      </section>}
       {toast && (
         <div className={`toast ${toast.kind}`}>
           {toast.kind === 'ok' ? <Check size={18} /> : <X size={18} />}

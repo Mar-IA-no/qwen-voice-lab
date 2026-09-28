@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .audio_pipeline import build_timeline, read_project_asset, trim_speech_edges
+from .audio_pipeline import build_timeline, read_project_asset, read_take_asset, trim_speech_edges
 from .config import Settings
 from .editorial import (
     compile_markdown,
@@ -527,6 +527,53 @@ class LongFormManager:
             archive.writestr("score.md", revision.markdown.encode())
             archive.writestr("score.json", score)
         return assembly, buffer.getvalue()
+
+    def handoff_bundle(self, project_id: str) -> bytes:
+        project = self._project(project_id)
+        handoff = project.handoff
+        if not handoff:
+            raise KeyError("handoff")
+        revision = self.store.get_revision(handoff.revision_id)
+        if not revision or revision.project_id != project_id or revision.source_sha256 != handoff.source_sha256:
+            raise ValueError("marked revision is unavailable or changed")
+        segments = self.store.list_segments(revision.id)
+        selected = []
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for index, segment in enumerate(segments, start=1):
+                take_id = handoff.selected_take_ids.get(segment.id)
+                if not take_id:
+                    continue
+                take = self.store.get_take(take_id)
+                if not take or (take.project_id, take.segment_id, take.text_sha256) != (
+                    project_id, segment.id, segment.text_sha256
+                ):
+                    raise ValueError(f"marked take is unavailable for block {index}")
+                raw, _ = read_take_asset(take, self.settings.projects_dir, raw=True)
+                trimmed, _ = read_take_asset(take, self.settings.projects_dir)
+                stem = f"locuciones/{index:02d}-{segment.id}-{take.id}"
+                archive.writestr(f"{stem}-raw.wav", raw)
+                archive.writestr(f"{stem}-trimmed.wav", trimmed)
+                selected.append({
+                    "segment_id": segment.id, "take_id": take.id,
+                    "raw_file": f"{stem}-raw.wav", "raw_sha256": take.raw_sha256,
+                    "trimmed_file": f"{stem}-trimmed.wav", "trimmed_sha256": take.trimmed_sha256,
+                })
+            manifest = {
+                "project_id": project_id, "project_title": project.title,
+                "marked_at": handoff.marked_at, "revision_id": revision.id,
+                "revision_number": revision.number, "source_sha256": revision.source_sha256,
+                "selected_takes": selected,
+                "missing_segment_ids": [row.id for row in segments if row.id not in handoff.selected_take_ids],
+                "published_to_psicopompo": False,
+            }
+            archive.writestr("handoff.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            archive.writestr("score.md", revision.markdown)
+            archive.writestr("score.json", json.dumps(
+                self._complete_revision(revision).model_dump(mode="json"),
+                ensure_ascii=False, sort_keys=True, indent=2,
+            ))
+        return buffer.getvalue()
 
     def _verify_beacon(self, project_id: str, asset_id: str | None) -> tuple[bytes, str]:
         if not asset_id:

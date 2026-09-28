@@ -29,6 +29,7 @@ export interface Capabilities {
   long_form_projects: boolean
   local_validator_enabled: boolean
   validator_models: string[]
+  codex_chat_url?: string | null
 }
 
 export interface ArchiveAsset {
@@ -176,6 +177,13 @@ export interface Project {
   provenance?: Record<string, unknown>
   status: 'draft' | 'generating' | 'needs_review' | 'ready'
   current_revision_id?: string | null
+  handoff?: {
+    revision_id: string
+    revision_number: number
+    source_sha256: string
+    selected_take_ids: Record<string, string>
+    marked_at: string
+  } | null
   created_at: string
   updated_at: string
 }

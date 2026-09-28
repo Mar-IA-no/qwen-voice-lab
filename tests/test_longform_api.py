@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import os
 import sqlite3
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -75,6 +77,68 @@ def create_project(client: TestClient) -> dict:
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_handoff_preserves_marked_score_and_selected_audio(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        url = f"/api/projects/{project['id']}/handoff"
+        assert client.get(f"{url}/bundle").status_code == 404
+        assert client.post(url, json={"expected_revision_id": "stale"}).status_code == 409
+        marked = client.post(url, json={"expected_revision_id": project["revision"]["id"]})
+        assert marked.status_code == 200, marked.text
+        assert marked.json()["handoff"]["selected_take_ids"] == {}
+        with zipfile.ZipFile(io.BytesIO(client.get(f"{url}/bundle").content)) as archive:
+            manifest = json.loads(archive.read("handoff.json"))
+            assert manifest["missing_segment_ids"] == [row["id"] for row in project["segments"]]
+            assert archive.namelist() == ["handoff.json", "score.md", "score.json"]
+
+        run = client.post(f"/api/projects/{project['id']}/runs").json()
+        assert wait_run(client, run["id"])["status"] == "complete"
+        generated = client.get(f"/api/projects/{project['id']}").json()
+        marked = client.post(url, json={"expected_revision_id": generated["revision"]["id"]})
+        assert marked.status_code == 200, marked.text
+        selection = marked.json()["handoff"]["selected_take_ids"]
+        assert len(selection) == len(generated["segments"])
+        bundle = client.get(f"{url}/bundle")
+        assert bundle.status_code == 200
+        assert bundle.headers["content-type"] == "application/zip"
+        with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+            manifest = json.loads(archive.read("handoff.json"))
+            archive_score = archive.read("score.json")
+            assert manifest["revision_id"] == generated["revision"]["id"]
+            assert not manifest["missing_segment_ids"]
+            assert manifest["published_to_psicopompo"] is False
+            assert len(manifest["selected_takes"]) == len(selection)
+            for take in manifest["selected_takes"]:
+                assert archive.read(take["raw_file"])
+                assert archive.read(take["trimmed_file"])
+
+        revised = client.post(
+            f"/api/projects/{project['id']}/revisions",
+            json={"markdown": "Testo completamente cambiato.\n"},
+        )
+        assert revised.status_code == 201
+        assert revised.json()["handoff"]["revision_id"] == generated["revision"]["id"]
+        with zipfile.ZipFile(io.BytesIO(client.get(f"{url}/bundle").content)) as after:
+            assert json.loads(after.read("handoff.json"))["revision_id"] == generated["revision"]["id"]
+            assert after.read("score.json") == archive_score
+
+
+def test_handoff_cannot_mark_a_revision_during_generation(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        project = create_project(client)
+        client.app.state.store.create_run_if_idle(ProjectRun(
+            id="run_handoff_blocker", project_id=project["id"],
+            revision_id=project["revision"]["id"],
+            segment_ids=[project["segments"][0]["id"]],
+        ))
+        response = client.post(
+            f"/api/projects/{project['id']}/handoff",
+            json={"expected_revision_id": project["revision"]["id"]},
+        )
+        assert response.status_code == 409
+        assert client.get(f"/api/projects/{project['id']}").json()["handoff"] is None
 
 
 def test_project_pipeline_persists_takes_qc_exact_pauses_and_final_audit(

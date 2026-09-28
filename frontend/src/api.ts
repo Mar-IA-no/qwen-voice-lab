@@ -25,6 +25,7 @@ export const api = {
   jobs: () => request<Job[]>('/api/jobs?limit=100'),
   projects: () => request<Project[]>('/api/projects'),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
+  markHandoff: (id: string, expected_revision_id: string) => request<ProjectDetail>(`/api/projects/${id}/handoff`, jsonPost({ expected_revision_id })),
   createProject: (payload: { title: string; voice_id: string; language: Language; blocks?: WorkshopBlock[]; markdown?: string; lead_pause_ms?: number; speech_speed?: number; beacon?: BeaconSettings; project_seed: number; sampling: SamplingSettings }) => request<ProjectDetail>('/api/projects', jsonPost(payload)),
   reviseProject: (id: string, payload: { expected_revision_id: string; blocks: WorkshopBlock[]; lead_pause_ms: number; speech_speed: number; beacon: BeaconSettings }) => request<ProjectDetail>(`/api/projects/${id}/revisions`, jsonPost(payload)),
   projectRevisions: (id: string) => request<SourceRevision[]>(`/api/projects/${id}/revisions`),

@@ -269,6 +269,7 @@ class Capabilities(BaseModel):
     long_form_projects: bool = True
     local_validator_enabled: bool = False
     validator_models: list[str] = Field(default_factory=list)
+    codex_chat_url: str | None = None
 
 
 class ArchiveAsset(BaseModel):
@@ -384,6 +385,18 @@ class RunRequest(BaseModel):
     expected_revision_id: str | None = None
 
 
+class ProjectHandoff(BaseModel):
+    revision_id: str
+    revision_number: int
+    source_sha256: str
+    selected_take_ids: dict[str, str] = Field(default_factory=dict)
+    marked_at: str = Field(default_factory=utc_now)
+
+
+class ProjectHandoffRequest(BaseModel):
+    expected_revision_id: str
+
+
 class Project(BaseModel):
     id: str
     title: str
@@ -396,6 +409,7 @@ class Project(BaseModel):
     _validate_provenance = field_validator("provenance")(validate_provenance)
     status: ProjectStatus = ProjectStatus.DRAFT
     current_revision_id: str | None = None
+    handoff: ProjectHandoff | None = None
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
 
