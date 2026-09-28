@@ -190,6 +190,46 @@ input::placeholder, textarea::placeholder { color: #55606a; }
 .assembly-player > div:first-child { margin-right: auto; }
 .assembly-player h2 { margin-top: 3px; font-size: 12px; }
 .assembly-player audio { max-width: 420px; }
+.workshop-layout > *, .workshop-layout .project-workspace { min-width: 0; }
+.workshop-state { color: var(--gold-bright); font-size: 11px; white-space: nowrap; }
+.workshop-mode { justify-self: start; }
+.workshop-fields { display: grid; gap: 15px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.workshop-timing { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); gap: 12px; }
+.workshop-blocks { display: grid; gap: 8px; }
+.workshop-block-heading { display: flex; align-items: baseline; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.workshop-block-heading strong { font-size: 13px; }
+.workshop-block-heading span { color: var(--muted); font-size: 10px; }
+.workshop-block { display: grid; grid-template-columns: 25px minmax(0, 1fr) 112px 112px 38px; gap: 8px; align-items: start; padding: 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(7,10,13,.3); }
+.workshop-block label { min-width: 0; font-size: 10px; }
+.workshop-block input, .workshop-block select { min-height: 34px; padding: 0 7px; font-size: 11px; }
+.workshop-block textarea { min-height: 74px; padding: 7px 9px; font-size: 11px; }
+.workshop-block-tools { display: grid; gap: 3px; }
+.workshop-block-tools .icon-button { width: 32px; height: 28px; }
+.workshop-beacon { display: grid; grid-template-columns: 90px 115px minmax(100px, 1fr) auto; gap: 12px; align-items: end; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.workshop-beacon .check-field { display: flex; flex-direction: row; align-items: center; min-height: 42px; }
+.workshop-beacon .check-field input { width: auto; }
+.workshop-beacon input[type="range"] { padding: 0; }
+.workshop-asset { align-self: center; color: var(--muted); font-size: 10px; }
+.workshop-history { padding-top: 10px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
+.workshop-history summary { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.workshop-history > div { display: grid; gap: 6px; margin-top: 10px; }
+.workshop-history > div > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px; border-bottom: 1px solid var(--line-soft); }
+.workshop-segment-actions, .workshop-downloads { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.workshop-raw { min-width: 0; }
+.workshop-raw span { font-size: 9px; }
+.workshop-layout .take-strip { grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); margin-left: 0; }
+.workshop-layout .segment-card > header { grid-template-columns: 25px minmax(0, 1fr) auto; }
+.workshop-layout .segment-card > header em { border-radius: 5px; white-space: nowrap; }
+.workshop-output { min-width: 0; padding: 18px; }
+.workshop-player { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
+.workshop-player > audio { display: none; }
+.workshop-audio-state { margin: -8px 0 12px; color: var(--gold-bright); font-size: 11px; }
+.workshop-player-main { display: grid; gap: 4px; min-width: 120px; flex: 1; }
+.workshop-player-main strong { font-size: 11px; }
+.workshop-player-main input { width: 100%; min-height: 18px; padding: 0; }
+.workshop-player-time, .workshop-player-beacon { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.workshop-player-beacon { display: inline-flex; align-items: center; gap: 4px; }
+.workshop-player-error { flex-basis: 100%; color: var(--red); font-size: 10px; }
 
 .monitor-idle { min-height: 270px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .monitor-idle .orb { width: 80px; height: 80px; display: grid; place-items: center; margin-bottom: 20px; border: 1px solid rgba(224,185,106,.25); border-radius: 50%; color: var(--gold); background: radial-gradient(circle, rgba(224,185,106,.18), rgba(224,185,106,.02) 62%); box-shadow: 0 0 40px rgba(224,185,106,.08); }
@@ -381,7 +421,7 @@ input::placeholder, textarea::placeholder { color: #55606a; }
   .app-shell { display: block; padding-bottom: 70px; }
   .sidebar { inset: auto 0 0; width: auto; height: 66px; flex-direction: row; align-items: center; padding: 8px 10px; border: 0; border-top: 1px solid var(--line); }
   .brand, .sidebar-foot { display: none; }
-  .sidebar nav { width: 100%; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; }
+  .sidebar nav { width: 100%; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
   .sidebar nav button { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 5px 2px; text-align: center; }
   .sidebar nav button.active::before { display: none; }
   .sidebar nav button span { font-size: 8px; }
@@ -389,6 +429,9 @@ input::placeholder, textarea::placeholder { color: #55606a; }
   .main-shell { grid-column: auto; }
   .topbar { height: 76px; padding: 16px 18px; }
   .topbar h1 { font-size: 19px; }
+  .topbar-actions { min-width: 0; }
+  .topbar .engine-pill { max-width: 132px; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .status-dot { flex: none; }
   .page { padding: 20px 16px 40px; }
   .language-heading { align-items: stretch; flex-direction: column; }
   .language-heading .language-switch { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); width: 100%; }
@@ -407,4 +450,13 @@ input::placeholder, textarea::placeholder { color: #55606a; }
   .form-footer { align-items: stretch; flex-direction: column; }
   .form-footer > label { width: 100%; }
   .api-card { grid-column: auto; align-items: flex-start; flex-direction: column; gap: 18px; }
+  .workshop-timing { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workshop-block { grid-template-columns: 24px minmax(0, 1fr) 36px; }
+  .workshop-block-text { grid-column: 2; }
+  .workshop-block > label:not(.workshop-block-text) { grid-column: 2; }
+  .workshop-block-tools { grid-column: 3; grid-row: 1 / span 4; }
+  .workshop-beacon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workshop-asset { grid-column: 1 / -1; }
+  .workshop-layout .segment-card > header { grid-template-columns: 24px minmax(0, 1fr); }
+  .workshop-layout .segment-card > header em { grid-column: 2; justify-self: start; }
 }

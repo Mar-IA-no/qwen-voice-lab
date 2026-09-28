@@ -7,7 +7,7 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from .models import ProjectSegment
+from .models import BlockInput, ProjectSegment
 
 PAUSE_RE = re.compile(r"^\[(?P<seconds>(?:\d+(?:\.\d{1,3})?|\.\d{1,3}))s\]$")
 LEGACY_PAUSE_RE = re.compile(
@@ -170,14 +170,65 @@ def reconcile_segments(
                 normalized_text=block.normalized_text,
                 text_sha256=block.text_sha256,
                 pause_after_ms=block.pause_after_ms,
+                speed=prior.speed if prior else None,
+                provenance=prior.provenance if prior else {},
                 selected_take_id=(
                     prior.selected_take_id
+                    if prior and prior.text_sha256 == block.text_sha256
+                    else None
+                ),
+                selection_override_reason=(
+                    prior.selection_override_reason
                     if prior and prior.text_sha256 == block.text_sha256
                     else None
                 ),
             )
         )
     return result
+
+
+def structured_segments(
+    project_id: str,
+    revision_id: str,
+    blocks: list[BlockInput],
+    previous: list[ProjectSegment],
+) -> list[ProjectSegment]:
+    prior_by_id = {row.id: row for row in previous}
+    segments = []
+    for position, block in enumerate(blocks):
+        normalized = normalize_spoken_text(block.text)
+        if not normalized:
+            raise ValueError(f"block {block.id} has no pronounceable text")
+        digest = hashlib.sha256(block.text.encode("utf-8")).hexdigest()
+        prior = prior_by_id.get(block.id)
+        segments.append(ProjectSegment(
+            id=block.id,
+            project_id=project_id,
+            revision_id=revision_id,
+            position=position,
+            text=block.text,
+            normalized_text=normalized,
+            text_sha256=digest,
+            pause_after_ms=block.pause_after_ms,
+            speed=block.speed,
+            provenance=block.provenance,
+            selected_take_id=(
+                prior.selected_take_id if prior and prior.text_sha256 == digest else None
+            ),
+            selection_override_reason=(
+                prior.selection_override_reason if prior and prior.text_sha256 == digest else None
+            ),
+        ))
+    return segments
+
+
+def segments_to_markdown(segments: list[ProjectSegment]) -> str:
+    paragraphs = []
+    for segment in sorted(segments, key=lambda row: row.position):
+        paragraphs.append(segment.text)
+        if segment.pause_after_ms:
+            paragraphs.append(f"[{segment.pause_after_ms / 1000:g}s]")
+    return "\n\n".join(paragraphs) + "\n"
 
 
 def migrate_legacy_markdown(markdown: str) -> tuple[str, list[dict[str, object]]]:

@@ -1,4 +1,4 @@
-import type { ArchiveAsset, Assembly, AuthStatus, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, SamplingSettings, Segment, Take, Voice } from './types'
+import type { ArchiveAsset, Assembly, AuthStatus, BeaconSettings, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, SamplingSettings, Segment, SourceRevision, Take, Voice, WorkshopBlock } from './types'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -25,15 +25,17 @@ export const api = {
   jobs: () => request<Job[]>('/api/jobs?limit=100'),
   projects: () => request<Project[]>('/api/projects'),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
-  createProject: (payload: { title: string; voice_id: string; language: Language; markdown: string; project_seed: number; sampling: SamplingSettings }) => request<ProjectDetail>('/api/projects', jsonPost(payload)),
-  reviseProject: (id: string, markdown: string) => request<ProjectDetail>(`/api/projects/${id}/revisions`, jsonPost({ markdown })),
-  runProject: (id: string) => request<ProjectRun>(`/api/projects/${id}/runs`, jsonPost({})),
+  createProject: (payload: { title: string; voice_id: string; language: Language; blocks?: WorkshopBlock[]; markdown?: string; lead_pause_ms?: number; speech_speed?: number; beacon?: BeaconSettings; project_seed: number; sampling: SamplingSettings }) => request<ProjectDetail>('/api/projects', jsonPost(payload)),
+  reviseProject: (id: string, payload: { expected_revision_id: string; blocks: WorkshopBlock[]; lead_pause_ms: number; speech_speed: number; beacon: BeaconSettings }) => request<ProjectDetail>(`/api/projects/${id}/revisions`, jsonPost(payload)),
+  projectRevisions: (id: string) => request<SourceRevision[]>(`/api/projects/${id}/revisions`),
+  restoreRevision: (id: string, revision_id: string, expected_revision_id: string) => request<ProjectDetail>(`/api/projects/${id}/restore`, jsonPost({ revision_id, expected_revision_id })),
+  runProject: (id: string, expected_revision_id: string) => request<ProjectRun>(`/api/projects/${id}/runs`, jsonPost({ expected_revision_id })),
   projectRuns: (id: string) => request<ProjectRun[]>(`/api/projects/${id}/runs`),
   projectTakes: (id: string, segmentId: string) => request<Take[]>(`/api/projects/${id}/segments/${segmentId}/takes`),
-  generateTake: (id: string, segmentId: string) => request<ProjectRun>(`/api/projects/${id}/segments/${segmentId}/takes`, jsonPost({})),
-  selectTake: (id: string, segmentId: string, takeId: string, override = false, reason?: string) => request<ProjectDetail>(`/api/projects/${id}/segments/${segmentId}/takes/${takeId}/select`, jsonPost({ override, reason })),
-  previewProject: (id: string) => request<Assembly>(`/api/projects/${id}/preview`, jsonPost({})),
-  assembleProject: (id: string, override_reason?: string) => request<Assembly>(`/api/projects/${id}/assemblies`, jsonPost({ override_reason })),
+  generateTake: (id: string, segmentId: string, expected_revision_id: string) => request<ProjectRun>(`/api/projects/${id}/segments/${segmentId}/takes`, jsonPost({ expected_revision_id })),
+  selectTake: (id: string, segmentId: string, takeId: string, expected_revision_id: string, override = false, reason?: string) => request<ProjectDetail>(`/api/projects/${id}/segments/${segmentId}/takes/${takeId}/select`, jsonPost({ expected_revision_id, override, reason })),
+  previewProject: (id: string, revision_id: string, segment_id?: string) => request<Assembly>(`/api/projects/${id}/preview`, jsonPost({ revision_id, segment_id })),
+  assembleProject: (id: string, revision_id: string, override_reason?: string) => request<Assembly>(`/api/projects/${id}/assemblies`, jsonPost({ revision_id, override_reason })),
   projectAssemblies: (id: string) => request<Assembly[]>(`/api/projects/${id}/assemblies`),
   archive: () => request<ArchiveAsset[]>('/api/archive'),
   createVoice: (form: FormData) => request<Voice>('/api/voices', { method: 'POST', body: form }),

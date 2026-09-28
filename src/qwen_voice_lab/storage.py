@@ -397,6 +397,54 @@ class Store:
                 (project.id, project.created_at, project.updated_at, self._payload(project)),
             )
 
+    def finish_run(
+        self,
+        run: ProjectRun,
+        project: Project,
+        revision: SourceRevision | None = None,
+        segments: list[ProjectSegment] | None = None,
+    ) -> None:
+        if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
+            raise ValueError("run must be terminal")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current_row = connection.execute(
+                "SELECT payload FROM projects WHERE id = ?", (project.id,)
+            ).fetchone()
+            if (
+                not current_row
+                or Project.model_validate_json(current_row[0]).current_revision_id
+                != run.revision_id
+            ):
+                raise ValueError("project revision changed during run")
+            if revision is not None:
+                assert segments is not None
+                project.current_revision_id = revision.id
+                connection.execute(
+                    "INSERT INTO source_revisions(id, project_id, number, created_at, payload) "
+                    "VALUES(?, ?, ?, ?, ?)",
+                    (
+                        revision.id, revision.project_id, revision.number,
+                        revision.created_at, self._payload(revision),
+                    ),
+                )
+                connection.executemany(
+                    "INSERT INTO project_segments(revision_id, id, project_id, position, payload) "
+                    "VALUES(?, ?, ?, ?, ?)",
+                    [
+                        (revision.id, row.id, row.project_id, row.position, self._payload(row))
+                        for row in segments
+                    ],
+                )
+            connection.execute(
+                "UPDATE project_runs SET status = ?, payload = ? WHERE id = ?",
+                (run.status, self._payload(run), run.id),
+            )
+            connection.execute(
+                "UPDATE projects SET updated_at = ?, payload = ? WHERE id = ?",
+                (project.updated_at, self._payload(project), project.id),
+            )
+
     def create_run_if_idle(self, run: ProjectRun) -> ProjectRun:
         """Atomically reject stale-revision and duplicate active runs."""
         with self._lock, self._connect() as connection:

@@ -43,6 +43,9 @@ from .models import (
     ProjectDetail,
     ProjectRun,
     RevisionCreate,
+    RevisionRestore,
+    RunRequest,
+    SourceRevision,
     SynthesisRequest,
     TakeDetail,
     TakeSelection,
@@ -483,7 +486,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(404, "Project not found.") from exc
         except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            status = 409 if "revision changed" in str(exc) else 422
+            raise HTTPException(status, str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/revisions", response_model=list[SourceRevision])
+    def project_revisions(project_id: str) -> list[SourceRevision]:
+        try:
+            return projects.list_revisions(project_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Project not found.") from exc
+
+    @app.post("/api/projects/{project_id}/restore", response_model=ProjectDetail, status_code=201)
+    def restore_project_revision(project_id: str, request: RevisionRestore) -> ProjectDetail:
+        try:
+            return projects.restore_revision(project_id, request)
+        except KeyError as exc:
+            raise HTTPException(404, "Project or revision not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/projects/{project_id}/runs", response_model=list[ProjectRun])
     def project_runs(project_id: str) -> list[ProjectRun]:
@@ -492,9 +512,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.list_runs(project_id)
 
     @app.post("/api/projects/{project_id}/runs", response_model=ProjectRun, status_code=202)
-    async def create_project_run(project_id: str) -> ProjectRun:
+    async def create_project_run(project_id: str, request: RunRequest | None = None) -> ProjectRun:
         try:
-            return await projects.submit_run(project_id)
+            return await projects.submit_run(
+                project_id, expected_revision_id=request.expected_revision_id if request else None
+            )
         except KeyError as exc:
             raise HTTPException(404, "Project or segment not found.") from exc
         except ValueError as exc:
@@ -522,10 +544,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=ProjectRun,
         status_code=202,
     )
-    async def generate_manual_take(project_id: str, segment_id: str) -> ProjectRun:
+    async def generate_manual_take(
+        project_id: str, segment_id: str, request: RunRequest | None = None
+    ) -> ProjectRun:
         try:
             return await projects.submit_run(
-                project_id, [segment_id], max_attempts=1, auto_select=False
+                project_id, [segment_id], max_attempts=1, auto_select=False,
+                expected_revision_id=request.expected_revision_id if request else None,
             )
         except KeyError as exc:
             raise HTTPException(404, "Project or segment not found.") from exc
@@ -575,7 +600,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def create_assembly(project_id: str, kind: AssemblyKind, request: AssemblyRequest) -> Assembly:
         try:
-            return projects.assemble(project_id, kind, request.override_reason)
+            return projects.assemble(
+                project_id, kind, request.override_reason,
+                revision_id=request.revision_id, segment_id=request.segment_id,
+            )
         except KeyError as exc:
             raise HTTPException(404, "Project not found.") from exc
         except ValueError as exc:
@@ -678,6 +706,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def assembly_manifest(assembly_id: str) -> Response:
         _, content = assembly_asset(assembly_id, "manifest_file")
         return Response(content=content, media_type="application/json")
+
+    @app.get("/api/assemblies/{assembly_id}/bundle")
+    def assembly_bundle(assembly_id: str) -> Response:
+        try:
+            assembly, content = projects.bundle(assembly_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Assembly not found.") from exc
+        except ValueError as exc:
+            if "partial previews" in str(exc):
+                raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(404, "Assembly asset is unavailable.") from exc
+        return Response(
+            content=content, media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{assembly.id}.zip"'},
+        )
+
+    @app.get("/api/projects/{project_id}/beacon")
+    def project_beacon(project_id: str) -> Response:
+        try:
+            content, mime_type = projects.beacon_audio(project_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, "Beacon audio is unavailable.") from exc
+        return Response(content=content, media_type=mime_type)
 
     source_frontend = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     packaged_frontend = Path(__file__).resolve().parent / "static"

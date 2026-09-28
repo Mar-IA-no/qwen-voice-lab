@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -9,6 +10,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def validate_provenance(value: dict[str, Any]) -> dict[str, Any]:
+    def check(item: Any) -> None:
+        if isinstance(item, str) and (
+            item.startswith(("/", "file://", "~/")) or re.match(r"^[a-zA-Z]:[\\/]", item)
+        ):
+            raise ValueError("provenance must not contain host paths")
+        if isinstance(item, dict):
+            for key, child in item.items():
+                check(key)
+                check(child)
+        elif isinstance(item, list):
+            for child in item:
+                check(child)
+
+    check(value)
+    return value
 
 
 class Language(StrEnum):
@@ -290,13 +309,79 @@ class ProjectCreate(BaseModel):
     title: Annotated[str, Field(min_length=1, max_length=120)]
     voice_id: str
     language: Language
-    markdown: Annotated[str, Field(min_length=1, max_length=100_000)]
+    markdown: Annotated[str, Field(min_length=1, max_length=100_000)] | None = None
+    blocks: Annotated[list[BlockInput], Field(min_length=1, max_length=256)] | None = None
+    baseline_speed: float = Field(default=1, ge=0.5, le=2)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    lead_pause_ms: int = Field(default=0, ge=0)
+    speech_speed: float = Field(default=1, ge=0.5, le=2)
+    beacon: BeaconSettings = Field(default_factory=lambda: BeaconSettings())
     project_seed: int = Field(default=20260805, ge=0, le=2_147_483_647)
     sampling: SamplingSettings = Field(default_factory=SamplingSettings)
 
+    _validate_provenance = field_validator("provenance")(validate_provenance)
+
+    @model_validator(mode="after")
+    def one_source(self) -> ProjectCreate:
+        if (self.markdown is None) == (self.blocks is None):
+            raise ValueError("provide exactly one of blocks or markdown")
+        if self.blocks and len({block.id for block in self.blocks}) != len(self.blocks):
+            raise ValueError("block IDs must be unique")
+        return self
+
 
 class RevisionCreate(BaseModel):
-    markdown: Annotated[str, Field(min_length=1, max_length=100_000)]
+    markdown: Annotated[str, Field(min_length=1, max_length=100_000)] | None = None
+    blocks: Annotated[list[BlockInput], Field(min_length=1, max_length=256)] | None = None
+    expected_revision_id: str | None = None
+    lead_pause_ms: int = Field(default=0, ge=0)
+    speech_speed: float = Field(default=1, ge=0.5, le=2)
+    beacon: BeaconSettings = Field(default_factory=lambda: BeaconSettings())
+
+    @model_validator(mode="after")
+    def one_source(self) -> RevisionCreate:
+        if (self.markdown is None) == (self.blocks is None):
+            raise ValueError("provide exactly one of blocks or markdown")
+        if self.blocks and len({block.id for block in self.blocks}) != len(self.blocks):
+            raise ValueError("block IDs must be unique")
+        return self
+
+
+class BlockInput(BaseModel):
+    id: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")]
+    text: Annotated[str, Field(min_length=1, max_length=4000)]
+    pause_after_ms: int = Field(default=0, ge=0)
+    speed: float | None = Field(default=None, ge=0.5, le=2)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+    _validate_provenance = field_validator("provenance")(validate_provenance)
+
+
+class BeaconSettings(BaseModel):
+    enabled: bool = False
+    asset_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    offset_seconds: float = Field(default=0, ge=0)
+    volume: float = Field(default=0.25, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def require_asset(self) -> BeaconSettings:
+        if self.enabled and not self.asset_id:
+            raise ValueError("enabled beacon requires asset_id")
+        return self
+
+
+class RevisionBlock(BlockInput):
+    selected_take_id: str | None = None
+    selection_override_reason: str | None = None
+
+
+class RevisionRestore(BaseModel):
+    revision_id: str
+    expected_revision_id: str | None = None
+
+
+class RunRequest(BaseModel):
+    expected_revision_id: str | None = None
 
 
 class Project(BaseModel):
@@ -306,6 +391,9 @@ class Project(BaseModel):
     language: Language
     project_seed: int
     sampling: SamplingSettings
+    baseline_speed: float = Field(default=1, ge=0.5, le=2)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    _validate_provenance = field_validator("provenance")(validate_provenance)
     status: ProjectStatus = ProjectStatus.DRAFT
     current_revision_id: str | None = None
     created_at: str = Field(default_factory=utc_now)
@@ -318,6 +406,11 @@ class SourceRevision(BaseModel):
     number: int
     markdown: str
     source_sha256: str
+    blocks: list[RevisionBlock] = Field(default_factory=list)
+    lead_pause_ms: int = Field(default=0, ge=0)
+    speech_speed: float = Field(default=1, ge=0.5, le=2)
+    beacon: BeaconSettings = Field(default_factory=BeaconSettings)
+    restored_from_revision_id: str | None = None
     created_at: str = Field(default_factory=utc_now)
 
 
@@ -329,8 +422,11 @@ class ProjectSegment(BaseModel):
     text: str
     normalized_text: str
     text_sha256: str
-    pause_after_ms: int = Field(default=0, ge=0, le=60_000)
+    pause_after_ms: int = Field(default=0, ge=0)
+    speed: float | None = Field(default=None, ge=0.5, le=2)
+    provenance: dict[str, Any] = Field(default_factory=dict)
     selected_take_id: str | None = None
+    selection_override_reason: str | None = None
 
 
 class ProjectDetail(Project):
@@ -375,6 +471,9 @@ class Take(BaseModel):
     model: str
     text_sha256: str
     sampling: SamplingSettings
+    baseline_speed: float = Field(default=1, ge=0.5, le=2)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    _validate_provenance = field_validator("provenance")(validate_provenance)
     selected: bool = False
     override_reason: str | None = None
     created_at: str = Field(default_factory=utc_now)
@@ -450,6 +549,8 @@ class TakeView(BaseModel):
     model: str
     text_sha256: str
     sampling: SamplingSettings
+    baseline_speed: float = 1
+    provenance: dict[str, Any] = Field(default_factory=dict)
     selected: bool
     override_reason: str | None = None
     created_at: str
@@ -462,6 +563,7 @@ class TakeDetail(TakeView):
 class TakeSelection(BaseModel):
     override: bool = False
     reason: str | None = Field(default=None, max_length=1000)
+    expected_revision_id: str | None = None
 
     @model_validator(mode="after")
     def require_override_reason(self) -> TakeSelection:
@@ -479,6 +581,7 @@ class Assembly(BaseModel):
     id: str
     project_id: str
     revision_id: str
+    segment_id: str | None = None
     kind: AssemblyKind
     output_file: str
     output_sha256: str
@@ -497,6 +600,7 @@ class AssemblyView(BaseModel):
     id: str
     project_id: str
     revision_id: str
+    segment_id: str | None = None
     kind: AssemblyKind
     output_sha256: str
     manifest_sha256: str
@@ -511,6 +615,8 @@ class AssemblyView(BaseModel):
 
 class AssemblyRequest(BaseModel):
     override_reason: str | None = Field(default=None, max_length=1000)
+    revision_id: str | None = None
+    segment_id: str | None = None
 
     @field_validator("override_reason")
     @classmethod

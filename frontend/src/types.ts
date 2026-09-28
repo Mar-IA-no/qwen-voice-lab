@@ -133,7 +133,23 @@ export interface ProjectSegment {
   normalized_text: string
   text_sha256: string
   pause_after_ms: number
+  speed?: number | null
   selected_take_id?: string | null
+}
+
+export interface WorkshopBlock {
+  id: string
+  text: string
+  pause_after_ms: number
+  speed: number | null
+  selected_take_id?: string | null
+}
+
+export interface BeaconSettings {
+  enabled: boolean
+  asset_id: string | null
+  offset_seconds: number
+  volume: number
 }
 
 export interface SourceRevision {
@@ -142,6 +158,10 @@ export interface SourceRevision {
   number: number
   markdown: string
   source_sha256: string
+  blocks: WorkshopBlock[]
+  lead_pause_ms: number
+  speech_speed: number
+  beacon: BeaconSettings
   created_at: string
 }
 
@@ -152,6 +172,8 @@ export interface Project {
   language: Language
   project_seed: number
   sampling: SamplingSettings
+  baseline_speed?: number
+  provenance?: Record<string, unknown>
   status: 'draft' | 'generating' | 'needs_review' | 'ready'
   current_revision_id?: string | null
   created_at: string
@@ -208,6 +230,8 @@ export interface Take {
   text_sha256: string
   sampling: SamplingSettings
   selected: boolean
+  baseline_speed?: number
+  provenance?: Record<string, unknown>
   override_reason?: string | null
   quality_reports: QualityReport[]
 }
@@ -226,6 +250,7 @@ export interface Assembly {
   project_id: string
   revision_id: string
   kind: 'preview' | 'final'
+  segment_id?: string | null
   duration_seconds: number
   audit_status: 'pending' | 'pass' | 'review' | 'overridden' | 'unavailable'
   audit: Record<string, unknown>

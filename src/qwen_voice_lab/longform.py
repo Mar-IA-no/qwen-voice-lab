@@ -2,27 +2,42 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import json
+import os
+import stat
 import threading
 import uuid
+import zipfile
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-from .audio_pipeline import build_timeline, trim_speech_edges
+from .audio_pipeline import build_timeline, read_project_asset, trim_speech_edges
 from .config import Settings
-from .editorial import compile_markdown, reconcile_segments
+from .editorial import (
+    compile_markdown,
+    normalize_spoken_text,
+    reconcile_segments,
+    segments_to_markdown,
+    structured_segments,
+)
 from .engine import audio_info, sha256_file
 from .models import (
     Assembly,
     AssemblyKind,
+    BeaconSettings,
     Project,
     ProjectCreate,
     ProjectDetail,
     ProjectRun,
+    ProjectSegment,
     ProjectStatus,
     QualityReport,
+    RevisionBlock,
     RevisionCreate,
+    RevisionRestore,
     RunStatus,
     ScoreSegment,
     SourceRevision,
@@ -112,7 +127,6 @@ class LongFormManager:
     def create_project(self, request: ProjectCreate) -> ProjectDetail:
         if not self.store.get_voice(request.voice_id):
             raise KeyError(request.voice_id)
-        blocks = compile_markdown(request.markdown)
         project = Project(
             id=new_id("project"),
             title=request.title,
@@ -120,48 +134,97 @@ class LongFormManager:
             language=request.language,
             project_seed=request.project_seed,
             sampling=request.sampling,
+            baseline_speed=request.baseline_speed,
+            provenance=request.provenance,
         )
-        return self._persist_revision(project, request.markdown, blocks, [], [])
+        return self._persist_revision(
+            project, request.markdown, request.blocks, [], [],
+            lead_pause_ms=request.lead_pause_ms,
+            speech_speed=request.speech_speed,
+            beacon=request.beacon,
+        )
 
     def add_revision(self, project_id: str, request: RevisionCreate) -> ProjectDetail:
         project = self._project(project_id)
         expected_current_revision_id = project.current_revision_id
         if not expected_current_revision_id:
             raise ValueError("project has no current revision")
-        blocks = compile_markdown(request.markdown)
+        if (
+            request.expected_revision_id
+            and request.expected_revision_id != expected_current_revision_id
+        ):
+            raise ValueError("project revision changed; reload before saving")
         revisions = self.store.list_revisions(project_id)
         previous = (
             self.store.list_segments(project.current_revision_id)
             if project.current_revision_id
             else []
         )
+        current_revision = self.store.get_revision(expected_current_revision_id)
         return self._persist_revision(
             project,
             request.markdown,
-            blocks,
+            request.blocks,
             previous,
             revisions,
             expected_current_revision_id=expected_current_revision_id,
+            lead_pause_ms=(
+                request.lead_pause_ms if "lead_pause_ms" in request.model_fields_set
+                else current_revision.lead_pause_ms
+            ),
+            speech_speed=(
+                request.speech_speed if "speech_speed" in request.model_fields_set
+                else current_revision.speech_speed
+            ),
+            beacon=(
+                request.beacon if "beacon" in request.model_fields_set
+                else current_revision.beacon
+            ),
         )
 
     def _persist_revision(
         self,
         project: Project,
-        markdown: str,
+        markdown: str | None,
         blocks,
         previous,
         revisions,
         *,
         expected_current_revision_id: str | None = None,
+        lead_pause_ms: int = 0,
+        speech_speed: float = 1,
+        beacon=None,
+        restored_from_revision_id: str | None = None,
     ) -> ProjectDetail:
+        revision_id = new_id("revision")
+        if blocks is not None:
+            segments = structured_segments(project.id, revision_id, blocks, previous)
+            markdown = segments_to_markdown(segments)
+        else:
+            assert markdown is not None
+            segments = reconcile_segments(
+                project.id, revision_id, compile_markdown(markdown), previous
+            )
+        if beacon and beacon.enabled:
+            self._verify_beacon(project.id, beacon.asset_id)
+        snapshot = [self._block_from_segment(row) for row in segments]
+        source = json.dumps(
+            {"blocks": [row.model_dump() for row in snapshot], "lead_pause_ms": lead_pause_ms,
+             "speech_speed": speech_speed, "beacon": beacon.model_dump() if beacon else None},
+            ensure_ascii=False, sort_keys=True,
+        )
         revision = SourceRevision(
-            id=new_id("revision"),
+            id=revision_id,
             project_id=project.id,
             number=(revisions[0].number + 1) if revisions else 1,
             markdown=markdown,
-            source_sha256=hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
+            source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            blocks=snapshot,
+            lead_pause_ms=lead_pause_ms,
+            speech_speed=speech_speed,
+            beacon=beacon or BeaconSettings(),
+            restored_from_revision_id=restored_from_revision_id,
         )
-        segments = reconcile_segments(project.id, revision.id, blocks, previous)
         project.current_revision_id = revision.id
         project.status = (
             ProjectStatus.READY
@@ -180,6 +243,49 @@ class LongFormManager:
             )
         return ProjectDetail(**project.model_dump(), revision=revision, segments=segments)
 
+    @staticmethod
+    def _block_from_segment(segment: ProjectSegment) -> RevisionBlock:
+        return RevisionBlock(
+            id=segment.id, text=segment.text, pause_after_ms=segment.pause_after_ms,
+            speed=segment.speed, provenance=segment.provenance,
+            selected_take_id=segment.selected_take_id,
+            selection_override_reason=segment.selection_override_reason,
+        )
+
+    def list_revisions(self, project_id: str) -> list[SourceRevision]:
+        self._project(project_id)
+        return [self._complete_revision(row) for row in self.store.list_revisions(project_id)]
+
+    def _complete_revision(self, revision: SourceRevision) -> SourceRevision:
+        if not revision.blocks:
+            revision.blocks = [
+                self._block_from_segment(row) for row in self.store.list_segments(revision.id)
+            ]
+        return revision
+
+    def restore_revision(self, project_id: str, request: RevisionRestore) -> ProjectDetail:
+        project = self._project(project_id)
+        source = self.store.get_revision(request.revision_id)
+        if not source or source.project_id != project_id:
+            raise KeyError(request.revision_id)
+        current_id = project.current_revision_id
+        if request.expected_revision_id and request.expected_revision_id != current_id:
+            raise ValueError("project revision changed; reload before restoring")
+        source = self._complete_revision(source)
+        blocks = [row.model_copy() for row in source.blocks]
+        revision_id = new_id("revision")
+        segments = [ProjectSegment(
+            id=block.id, project_id=project_id, revision_id=revision_id, position=index,
+            text=block.text, normalized_text=normalize_spoken_text(block.text),
+            text_sha256=hashlib.sha256(block.text.encode()).hexdigest(),
+            pause_after_ms=block.pause_after_ms, speed=block.speed,
+            provenance=block.provenance, selected_take_id=block.selected_take_id,
+            selection_override_reason=block.selection_override_reason,
+        ) for index, block in enumerate(blocks)]
+        return self._publish_snapshot(
+            project, source, segments, current_id, restored_from=source.id
+        )
+
     def get_project(self, project_id: str) -> ProjectDetail:
         project = self._project(project_id)
         revision = (
@@ -187,7 +293,50 @@ class LongFormManager:
             if project.current_revision_id
             else None
         )
+        if revision:
+            revision = self._complete_revision(revision)
         segments = self.store.list_segments(revision.id) if revision else []
+        return ProjectDetail(**project.model_dump(), revision=revision, segments=segments)
+
+    def _publish_snapshot(
+        self,
+        project: Project,
+        source: SourceRevision,
+        segments: list[ProjectSegment],
+        expected_revision_id: str,
+        *,
+        restored_from: str | None = None,
+        run: ProjectRun | None = None,
+    ) -> ProjectDetail:
+        revision_id = segments[0].revision_id
+        markdown = segments_to_markdown(segments)
+        blocks = [self._block_from_segment(row) for row in segments]
+        payload = json.dumps({
+            "blocks": [row.model_dump() for row in blocks],
+            "lead_pause_ms": source.lead_pause_ms,
+            "speech_speed": source.speech_speed,
+            "beacon": source.beacon.model_dump(),
+        }, ensure_ascii=False, sort_keys=True)
+        revision = SourceRevision(
+            id=revision_id, project_id=project.id,
+            number=self.store.list_revisions(project.id)[0].number + 1,
+            markdown=markdown, source_sha256=hashlib.sha256(payload.encode()).hexdigest(),
+            blocks=blocks, lead_pause_ms=source.lead_pause_ms,
+            speech_speed=source.speech_speed, beacon=source.beacon,
+            restored_from_revision_id=restored_from,
+        )
+        project.current_revision_id = revision.id
+        project.status = (
+            ProjectStatus.READY if all(row.selected_take_id for row in segments)
+            else ProjectStatus.NEEDS_REVIEW
+        )
+        project.updated_at = utc_now()
+        if run:
+            self.store.finish_run(run, project, revision, segments)
+        else:
+            self.store.save_project_revision_if_idle(
+                project, revision, segments, expected_revision_id
+            )
         return ProjectDetail(**project.model_dump(), revision=revision, segments=segments)
 
     async def submit_run(
@@ -197,8 +346,11 @@ class LongFormManager:
         max_attempts: int | None = None,
         *,
         auto_select: bool = True,
+        expected_revision_id: str | None = None,
     ) -> ProjectRun:
         project = self.get_project(project_id)
+        if expected_revision_id and expected_revision_id != project.current_revision_id:
+            raise ValueError("project revision changed; reload before starting a run")
         if not project.revision:
             raise ValueError("project has no source revision")
         known = {row.id for row in project.segments}
@@ -228,7 +380,14 @@ class LongFormManager:
             raise KeyError(segment_id)
         return [
             TakeDetail(
-                **take.model_dump(),
+                **{
+                    **take.model_dump(),
+                    "selected": take.id == segment.selected_take_id,
+                    "override_reason": (
+                        segment.selection_override_reason
+                        if take.id == segment.selected_take_id else None
+                    ),
+                },
                 quality_reports=self.store.list_quality_reports(take.id),
             )
             for take in self.store.list_compatible_takes(
@@ -241,6 +400,8 @@ class LongFormManager:
     ) -> ProjectDetail:
         detail = self.get_project(project_id)
         assert detail.revision
+        if selection.expected_revision_id and selection.expected_revision_id != detail.revision.id:
+            raise ValueError("project revision changed; reload before selecting")
         segment = self.store.get_segment(detail.revision.id, segment_id)
         take = self.store.get_take(take_id)
         if (
@@ -253,39 +414,34 @@ class LongFormManager:
             raise KeyError(take_id)
         if take.status != TakeStatus.PASS and not selection.override:
             raise ValueError("only passing takes can be selected without an override")
-        for previous in self.store.list_compatible_takes(
-            detail.id, segment.id, segment.text_sha256
-        ):
-            if previous.selected:
-                previous.selected = False
-                self.store.save_take(previous)
-        take.selected = True
-        if selection.override:
-            take.status = TakeStatus.OVERRIDDEN
-            take.override_reason = selection.reason.strip() if selection.reason else None
-        self.store.save_take(take)
-        segment.selected_take_id = take.id
-        self.store.save_segment(segment)
-        project = self._project(project_id)
-        current = self.store.list_segments(detail.revision.id)
-        project.status = (
-            ProjectStatus.READY
-            if all(row.selected_take_id for row in current)
-            else ProjectStatus.NEEDS_REVIEW
+        revision_id = new_id("revision")
+        segments = [row.model_copy(update={"revision_id": revision_id}) for row in detail.segments]
+        chosen = next(row for row in segments if row.id == segment_id)
+        chosen.selected_take_id = take.id
+        chosen.selection_override_reason = selection.reason.strip() if selection.override else None
+        return self._publish_snapshot(
+            self._project(project_id), detail.revision, segments, detail.revision.id
         )
-        project.updated_at = utc_now()
-        self.store.save_project(project)
-        return self.get_project(project_id)
 
     def assemble(
-        self, project_id: str, kind: AssemblyKind, override_reason: str | None = None
+        self, project_id: str, kind: AssemblyKind, override_reason: str | None = None,
+        *, revision_id: str | None = None, segment_id: str | None = None,
     ) -> Assembly:
-        detail = self.get_project(project_id)
-        if not detail.revision:
+        project = self._project(project_id)
+        revision = self.store.get_revision(revision_id or project.current_revision_id)
+        if not revision or revision.project_id != project_id:
             raise ValueError("project has no revision")
-        selected_ids = [row.selected_take_id for row in detail.segments if row.selected_take_id]
+        revision = self._complete_revision(revision)
+        segments = self.store.list_segments(revision.id)
+        if segment_id:
+            if kind != AssemblyKind.PREVIEW:
+                raise ValueError("segment_id is only supported for preview")
+            segments = [row for row in segments if row.id == segment_id]
+            if not segments:
+                raise KeyError(segment_id)
+        selected_ids = [row.selected_take_id for row in segments if row.selected_take_id]
         takes = {take_id: self.store.get_take(take_id) for take_id in selected_ids}
-        if len(takes) != len(detail.segments) or any(value is None for value in takes.values()):
+        if len(takes) != len(segments) or any(value is None for value in takes.values()):
             raise ValueError("all segments must have an available selected take")
         assembly_id = new_id("assembly")
         directory = self._project_dir(project_id) / "assemblies" / assembly_id
@@ -294,25 +450,27 @@ class LongFormManager:
         manifest = build_timeline(
             output,
             manifest_file,
-            detail.segments,
+            segments,
             takes,  # type: ignore[arg-type]
             project_id=project_id,
-            revision_id=detail.revision.id,
+            revision_id=revision.id,
             projects_root=self.settings.projects_dir,
+            lead_pause_ms=revision.lead_pause_ms if not segment_id else 0,
+            speech_speed=revision.speech_speed,
         )
         audit_status = "pending"
         audit = {}
         if kind == AssemblyKind.FINAL:
-            expected = " ".join(row.text for row in detail.segments)
-            voice = self.store.get_voice(detail.voice_id)
+            expected = " ".join(row.text for row in segments)
+            voice = self.store.get_voice(project.voice_id)
             try:
                 with self.engine_lock:
                     report = self.validator.validate(
                         output,
                         expected,
-                        detail.language,
+                        project.language,
                         reference_text=voice.reference_text if voice else "",
-                        expected_blocks=[row.text for row in detail.segments],
+                        expected_blocks=[row.text for row in segments],
                         mock=self.settings.engine == "mock",
                     )
                 audit = report.model_dump(mode="json", exclude={"take_id"})
@@ -326,7 +484,8 @@ class LongFormManager:
         assembly = Assembly(
             id=assembly_id,
             project_id=project_id,
-            revision_id=detail.revision.id,
+            revision_id=revision.id,
+            segment_id=segment_id,
             kind=kind,
             output_file=str(output.resolve()),
             output_sha256=manifest["output_sha256"],
@@ -339,6 +498,74 @@ class LongFormManager:
             override_reason=override_reason,
         )
         return self.store.save_assembly(assembly)
+
+    def bundle(self, assembly_id: str) -> tuple[Assembly, bytes]:
+        assembly = self.store.get_assembly(assembly_id)
+        if not assembly:
+            raise KeyError(assembly_id)
+        if assembly.segment_id is not None:
+            raise ValueError("partial previews cannot be exported as a full score bundle")
+        revision = self.store.get_revision(assembly.revision_id)
+        if not revision or revision.project_id != assembly.project_id:
+            raise ValueError("assembly revision is unavailable")
+        revision = self._complete_revision(revision)
+        audio, _ = read_project_asset(
+            Path(assembly.output_file), assembly.output_sha256,
+            self.settings.projects_dir, assembly.project_id, label="assembly audio",
+        )
+        manifest, _ = read_project_asset(
+            Path(assembly.manifest_file), assembly.manifest_sha256,
+            self.settings.projects_dir, assembly.project_id, label="assembly manifest",
+        )
+        score = json.dumps(
+            revision.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, indent=2
+        ).encode()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("preview.wav", audio)
+            archive.writestr("manifest.json", manifest)
+            archive.writestr("score.md", revision.markdown.encode())
+            archive.writestr("score.json", score)
+        return assembly, buffer.getvalue()
+
+    def _verify_beacon(self, project_id: str, asset_id: str | None) -> tuple[bytes, str]:
+        if not asset_id:
+            raise ValueError("beacon asset_id is required")
+        directory = self.settings.projects_dir / project_id / "beacon"
+        manifest_path = directory / "manifest.json"
+        try:
+            if directory.is_symlink() or manifest_path.is_symlink():
+                raise ValueError("beacon path must not contain symbolic links")
+            descriptor = os.open(manifest_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError("beacon manifest is not a regular file")
+                with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                    manifest = json.load(stream)
+            finally:
+                os.close(descriptor)
+            mime_type = manifest["mime_type"]
+            digest = manifest["sha256"]
+            if digest != asset_id or mime_type not in {
+                "audio/wav", "audio/x-wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/mp4"
+            }:
+                raise ValueError("beacon manifest does not match asset")
+            candidates = list(directory.glob("audio.*"))
+            if len(candidates) != 1:
+                raise ValueError("beacon audio is unavailable")
+            content, _ = read_project_asset(
+                candidates[0], digest, self.settings.projects_dir, project_id, label="beacon audio"
+            )
+        except (OSError, KeyError, json.JSONDecodeError) as exc:
+            raise ValueError("beacon audio is unavailable") from exc
+        return content, mime_type
+
+    def beacon_audio(self, project_id: str) -> tuple[bytes, str]:
+        project = self._project(project_id)
+        revision = self.store.get_revision(project.current_revision_id)
+        if not revision or not revision.beacon.asset_id:
+            raise KeyError("beacon")
+        return self._verify_beacon(project_id, revision.beacon.asset_id)
 
     async def _run(self) -> None:
         while True:
@@ -371,6 +598,7 @@ class LongFormManager:
         project.status = ProjectStatus.GENERATING
         self.store.save_project(project)
         needs_review = False
+        auto_selections: dict[str, str] = {}
         try:
             pending = {}
             for segment_id in run.segment_ids:
@@ -479,12 +707,7 @@ class LongFormManager:
                     self.store.save_take(take)
                     if verdict == "pass":
                         if run.auto_select:
-                            self.select_take(
-                                project.id,
-                                segment.id,
-                                take.id,
-                                TakeSelection(override=False),
-                            )
+                            auto_selections[segment.id] = take.id
                     elif verdict == "retry":
                         next_pending[segment.id] = segment
                     else:
@@ -515,14 +738,25 @@ class LongFormManager:
             run.finished_at = utc_now()
             project = self._project(project.id)
             selected = self.store.list_segments(run.revision_id)
-            if run.status in {RunStatus.NEEDS_REVIEW, RunStatus.FAILED}:
-                project.status = ProjectStatus.NEEDS_REVIEW
-            elif selected and all(row.selected_take_id for row in selected):
-                project.status = ProjectStatus.READY
+            if auto_selections:
+                revision_id = new_id("revision")
+                snapshot = [row.model_copy(update={"revision_id": revision_id}) for row in selected]
+                for row in snapshot:
+                    if row.id in auto_selections:
+                        row.selected_take_id = auto_selections[row.id]
+                        row.selection_override_reason = None
+                self._publish_snapshot(
+                    project, self._complete_revision(revision), snapshot, run.revision_id,
+                    run=run,
+                )
             else:
-                project.status = ProjectStatus.NEEDS_REVIEW
-            project.updated_at = utc_now()
-            self.store.save_terminal_run_and_project(run, project)
+                project.status = (
+                    ProjectStatus.READY
+                    if selected and all(row.selected_take_id for row in selected)
+                    else ProjectStatus.NEEDS_REVIEW
+                )
+                project.updated_at = utc_now()
+                self.store.finish_run(run, project)
 
     async def _render_take(self, project, revision, segment, voice, attempt):
         seed = deterministic_seed(project.project_seed, segment.id, attempt)
@@ -573,6 +807,8 @@ class LongFormManager:
             model=metrics.model,
             text_sha256=segment.text_sha256,
             sampling=project.sampling,
+            baseline_speed=project.baseline_speed,
+            provenance=project.provenance,
         )
         technical = self._technical_report(take)
         self.store.save_take(take)

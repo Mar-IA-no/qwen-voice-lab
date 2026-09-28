@@ -16,7 +16,7 @@ To let yourself be carried by the sound.
 [0.7s]
 ```
 
-`[Ns]` accepts an integer or up to three decimal places, must follow speech, and is limited to 60 seconds. Headings, lists, emphasis, arrows, `^`, `[pause: ...]`, T/S/D/R tags, and unknown bracket directives are rejected with a line diagnostic. Project title, language, voice, seed, and sampling settings are metadata outside the body.
+`[Ns]` accepts an integer or up to three decimal places and must follow speech. There is no editorial 60-second cap; available disk space and the output WAV format still limit assembly length. Headings, lists, emphasis, arrows, `^`, `[pause: ...]`, T/S/D/R tags, and unknown bracket directives are rejected with a line diagnostic. Project title, language, voice, seed, and sampling settings are metadata outside the body.
 
 There is deliberately no legacy parser in the render path. Convert an old file once and review the report:
 
@@ -34,6 +34,8 @@ The migrator is best-effort. It removes known emphasis/direction glyphs and maps
 ## Durable pipeline
 
 Each source save creates an immutable revision. Exact unchanged speech keeps its stable segment ID and selected take; a pause-only revision therefore needs no TTS. Punctuation or spoken-text edits invalidate only the affected selection.
+
+The visual editor uses ordered blocks with stable IDs. It can change spoken text, the silence after each block, an initial silence, a general speech speed, and an optional speed for one block. Speeds from 0.5 to 2 change speech tempo without changing pitch or authored pauses. Saving or restoring creates a new revision, including its selected takes and Beacon settings. Importing Markdown remains available for older projects. A changed text block needs a new take; changing timing reuses the existing audio.
 
 Saving a revision and creating a run are mutually exclusive inside SQLite. A queued or running project rejects a new revision, while a run whose source pointer became stale is rejected before it enters the queue. Shutdown marks an interrupted active run failed before GPU-worker and model cleanup continue; startup remains the recovery floor for an abrupt process loss.
 
@@ -53,9 +55,13 @@ The identity metric is intentionally advisory until a voice/language calibration
 
 Preview is button-triggered and CPU-only. It concatenates selected trimmed takes and inserts sample-exact zero-valued pauses compiled from the current source. Raw takes are never modified. Final uses the same timeline builder, writes an immutable JSON manifest, then transcribes the full WAV to check ordered coverage and the ending. A failed or unavailable final audit needs review; approval by override requires a reason and creates a new immutable assembly.
 
+The preview can target a complete revision or one block. The full preview downloads as a ZIP with the speech WAV, a timing manifest, and the score in Markdown and JSON. A partial preview cannot be downloaded as a complete score. Beacon is a separate local track in the browser, with shared play/pause/seek, an adjustable offset and volume, a three-second fade-in, and a short loop crossfade. It is not mixed into the exported speech WAV.
+
 Each take and finished assembly asset is opened once with no-follow semantics and copied into an authenticated in-memory snapshot. Its SHA-256 is verified over those exact bytes, and decoding or HTTP serving consumes that same snapshot. A mutable path is never reopened after verification, and altered WAV or manifest bytes fail closed.
 
 Project audio lives below `data/projects/<project_id>/`. Back up the SQLite database and the complete `data/projects/` tree together; either one alone is insufficient for recovery.
+
+An authorized local bundle can be imported with `qvl import-project-bundle BUNDLE --data-dir DATA --confirm-authorized`. The command verifies every file and hash before writing, preserves original recordings, and marks imported takes for human review. Reimporting an identical bundle leaves edited projects intact. The importer shares an immutable Beacon asset across imported projects on filesystems that support hardlinks.
 
 ## Local validator environment
 
@@ -85,12 +91,12 @@ The current content gate retries when WER exceeds 0.12, token coverage is below 
 
 ## API sequence
 
-1. `POST /api/projects` with canonical Markdown and project metadata.
+1. `POST /api/projects` with canonical Markdown or structured blocks and project metadata.
 2. `POST /api/projects/{id}/runs`; poll `GET /api/project-runs/{run_id}`.
 3. Review `GET /api/projects/{id}/segments/{segment_id}/takes`; download the authenticated trimmed or raw take from `/api/takes/{take_id}/download[?raw=true]`.
 4. Generate another take or select one; non-passing selection supplies `{ "override": true, "reason": "..." }`.
-5. Edit pauses by saving a new source revision.
-6. `POST /api/projects/{id}/preview` for CPU preview.
+5. Edit text, pauses, or speech speed with `POST /api/projects/{id}/revisions`; restore a prior revision with `POST /api/projects/{id}/restore`.
+6. `POST /api/projects/{id}/preview` for a CPU preview of the full score or one block. A full preview can be downloaded as a ZIP.
 7. `POST /api/projects/{id}/assemblies` for final audio and transcript audit.
 8. Download `/api/assemblies/{id}/download` and `/api/assemblies/{id}/manifest`.
 

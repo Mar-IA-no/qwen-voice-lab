@@ -6,6 +6,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from .bundle_import import import_project_bundle
+from .config import Settings
 from .editorial import migrate_legacy_markdown
 
 
@@ -112,7 +114,15 @@ def main() -> int:
     migrate.add_argument("--output", type=Path, required=True)
     migrate.add_argument("--report", type=Path, required=True)
     migrate.add_argument("--overwrite", action="store_true")
+    import_bundle = commands.add_parser("import-project-bundle")
+    import_bundle.add_argument("bundle", type=Path)
+    import_bundle.add_argument("--data-dir", type=Path, required=True)
+    import_bundle.add_argument("--confirm-authorized", action="store_true", required=True)
     args = parser.parse_args()
     if args.command == "migrate-editorial":
         return migrate_editorial(args.input, args.output, args.report, overwrite=args.overwrite)
+    if args.command == "import-project-bundle":
+        result = import_project_bundle(args.bundle, Settings(data_dir=args.data_dir))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     return 2

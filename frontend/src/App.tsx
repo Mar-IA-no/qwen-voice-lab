@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
   Activity,
   Archive,
@@ -26,8 +26,8 @@ import {
   X,
 } from 'lucide-react'
 import { api } from './api'
-import { LatestRequest } from './latest-request'
-import type { ArchiveAsset, Assembly, AuthStatus, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, Prosody, Segment, Take, Voice } from './types'
+import { ProjectWorkshop } from './ProjectWorkshop'
+import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Project, Prosody, Segment, Voice } from './types'
 
 type View = 'studio' | 'projects' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
 
@@ -147,7 +147,7 @@ function App() {
         ) : (
           <div className="page">
             {view === 'studio' && <Studio voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
-            {view === 'projects' && <ProjectsPage projects={projects} voices={voices} notify={notify} refresh={refresh} />}
+            {view === 'projects' && <ProjectWorkshop projects={projects} voices={voices} notify={notify} refresh={refresh} />}
             {view === 'voices' && <Voices voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
             {view === 'archive' && <ArchivePage assets={archive} />}
             {view === 'compare' && <Compare voices={voices} jobs={jobs} notify={notify} />}
@@ -217,220 +217,6 @@ function Sidebar({ view, setView, activeJobs }: { view: View; setView: (view: Vi
       </div>
     </aside>
   )
-}
-
-const DEFAULT_PROJECT_MARKDOWN = `First, I invite you to simply listen.
-
-[1s]
-
-To let yourself be carried by the sound.
-
-[0.7s]`
-
-function ProjectsPage({ projects, voices, notify, refresh }: {
-  projects: Project[]
-  voices: Voice[]
-  notify: (kind: 'ok' | 'error', text: string) => void
-  refresh: (quiet?: boolean) => Promise<void>
-}) {
-  const [selectedId, setSelectedId] = useState<string>('')
-  const [detail, setDetail] = useState<ProjectDetail | null>(null)
-  const [markdown, setMarkdown] = useState(DEFAULT_PROJECT_MARKDOWN)
-  const [takes, setTakes] = useState<Record<string, Take[]>>({})
-  const [runs, setRuns] = useState<ProjectRun[]>([])
-  const [assemblies, setAssemblies] = useState<Assembly[]>([])
-  const [creating, setCreating] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const editorDirty = useRef(false)
-  const editorVersion = useRef(0)
-  const editorRevisionId = useRef<string | null>(null)
-  const selectedProject = useRef('')
-  const projectLoads = useRef(new LatestRequest())
-  const notifyRef = useRef(notify)
-  notifyRef.current = notify
-  const [draft, setDraft] = useState({
-    title: 'Nueva narración', voice_id: '', language: 'en' as Language, project_seed: 20260805,
-    do_sample: true, temperature: 0.9, top_p: 1, top_k: 50, repetition_penalty: 1.05,
-    subtalker_dosample: true, subtalker_temperature: 0.9, subtalker_top_p: 1,
-    subtalker_top_k: 50, max_new_tokens: 2048,
-  })
-
-  const loadProject = useCallback(async (id: string, hydrateEditor = false) => {
-    const generation = projectLoads.current.begin()
-    const [next, nextRuns, nextAssemblies] = await Promise.all([
-      api.project(id), api.projectRuns(id), api.projectAssemblies(id),
-    ])
-    if (!projectLoads.current.isCurrent(generation) || selectedProject.current !== id) return
-    const rows = await Promise.all(next.segments.map(async (segment) => [
-      segment.id, await api.projectTakes(id, segment.id),
-    ] as const))
-    if (!projectLoads.current.isCurrent(generation) || selectedProject.current !== id) return
-    setDetail(next)
-    const nextRevisionId = next.revision?.id ?? null
-    if (hydrateEditor || (!editorDirty.current && editorRevisionId.current !== nextRevisionId)) {
-      setMarkdown(next.revision?.markdown ?? '')
-      editorRevisionId.current = nextRevisionId
-      editorDirty.current = false
-    }
-    setTakes(Object.fromEntries(rows))
-    setRuns(nextRuns)
-    setAssemblies(nextAssemblies)
-  }, [])
-
-  useEffect(() => {
-    if (!selectedId && projects[0]) {
-      selectedProject.current = projects[0].id
-      setSelectedId(projects[0].id)
-    }
-  }, [projects, selectedId])
-  useEffect(() => {
-    if (!draft.voice_id && voices[0]) setDraft((value) => ({ ...value, voice_id: voices[0].id }))
-  }, [draft.voice_id, voices])
-  useEffect(() => {
-    if (!selectedId || creating) return
-    editorDirty.current = false
-    editorRevisionId.current = null
-    selectedProject.current = selectedId
-    void loadProject(selectedId, true).catch((error) => notifyRef.current('error', (error as Error).message))
-    const timer = window.setInterval(() => {
-      void loadProject(selectedId).catch(() => undefined)
-    }, 1800)
-    return () => window.clearInterval(timer)
-  }, [creating, loadProject, selectedId])
-
-  const execute = async (work: () => Promise<unknown>, success: string) => {
-    setBusy(true)
-    try {
-      await work()
-      notify('ok', success)
-      await refresh(true)
-      if (selectedId) await loadProject(selectedId)
-    } catch (error) {
-      notify('error', (error as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const create = async (event: FormEvent) => {
-    event.preventDefault()
-    await execute(async () => {
-      const next = await api.createProject({
-        title: draft.title, voice_id: draft.voice_id, language: draft.language,
-        markdown, project_seed: draft.project_seed,
-        sampling: {
-          do_sample: draft.do_sample,
-          temperature: draft.temperature, top_p: draft.top_p, top_k: draft.top_k,
-          repetition_penalty: draft.repetition_penalty, max_new_tokens: draft.max_new_tokens,
-          subtalker_dosample: draft.subtalker_dosample, subtalker_temperature: draft.subtalker_temperature,
-          subtalker_top_p: draft.subtalker_top_p, subtalker_top_k: draft.subtalker_top_k,
-        },
-      })
-      selectedProject.current = next.id
-      setSelectedId(next.id)
-      setCreating(false)
-    }, 'Proyecto creado; la fuente todavía no generó audio.')
-  }
-
-  const latestAssembly = assemblies[0]
-  const activeRun = runs.some((run) => run.status === 'queued' || run.status === 'running')
-  const updateMarkdown = (value: string) => {
-    setMarkdown(value)
-    editorDirty.current = true
-    editorVersion.current += 1
-  }
-  const beginCreate = () => {
-    setCreating(true)
-    selectedProject.current = ''
-    setDetail(null)
-    setMarkdown(DEFAULT_PROJECT_MARKDOWN)
-    editorRevisionId.current = null
-    editorDirty.current = false
-  }
-  return <div className="projects-layout">
-    <aside className="panel project-list">
-      <div className="panel-heading compact"><div><span className="kicker">LONG FORM</span><h2>Proyectos</h2></div>
-        <button className="icon-button" onClick={beginCreate}><Plus size={17} /></button>
-      </div>
-      {projects.map((project) => <button key={project.id} className={selectedId === project.id ? 'active' : ''} onClick={() => { selectedProject.current = project.id; setSelectedId(project.id); setCreating(false) }}>
-        <span><strong>{project.title}</strong><small>{project.language.toUpperCase()} · {project.status}</small></span><ChevronRight size={15} />
-      </button>)}
-      {!projects.length && <p className="fine-print">Creá el primer proyecto desde un Markdown canónico.</p>}
-    </aside>
-
-    {creating || !detail ? <form className="panel project-editor" onSubmit={create}>
-      <div className="panel-heading"><div><span className="kicker">CANONICAL SOURCE</span><h2>Nuevo proyecto</h2></div></div>
-      <div className="field-grid two"><label><span>Nombre</span><input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
-        <label><span>Voz</span><select value={draft.voice_id} onChange={(e) => setDraft({ ...draft, voice_id: e.target.value })}>{voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}</select></label></div>
-      <div className="field-grid three"><label><span>Idioma</span><select value={draft.language} onChange={(e) => setDraft({ ...draft, language: e.target.value as Language })}>{(['es','en','pt','fr','it','de'] as Language[]).map((row) => <option key={row}>{row}</option>)}</select></label>
-        <label><span>Seed del proyecto</span><input type="number" value={draft.project_seed} onChange={(e) => setDraft({ ...draft, project_seed: Number(e.target.value) })} /></label>
-        <label><span>Temperature</span><input type="number" min="0.01" max="2" step="0.05" value={draft.temperature} onChange={(e) => setDraft({ ...draft, temperature: Number(e.target.value) })} /></label></div>
-      <details className="sampling-details"><summary>Sampling avanzado de talker y subtalker</summary><div className="field-grid three">
-        <label className="check-field"><input type="checkbox" checked={draft.do_sample} onChange={(e) => setDraft({ ...draft, do_sample: e.target.checked })} /><span>Talker sampling</span></label>
-        <label><span>Talker top-p</span><input type="number" min="0.01" max="1" step="0.05" value={draft.top_p} onChange={(e) => setDraft({ ...draft, top_p: Number(e.target.value) })} /></label>
-        <label><span>Talker top-k</span><input type="number" min="1" max="1000" step="1" value={draft.top_k} onChange={(e) => setDraft({ ...draft, top_k: Number(e.target.value) })} /></label>
-        <label><span>Repetition penalty</span><input type="number" min="0.5" max="2" step="0.01" value={draft.repetition_penalty} onChange={(e) => setDraft({ ...draft, repetition_penalty: Number(e.target.value) })} /></label>
-        <label className="check-field"><input type="checkbox" checked={draft.subtalker_dosample} onChange={(e) => setDraft({ ...draft, subtalker_dosample: e.target.checked })} /><span>Subtalker sampling</span></label>
-        <label><span>Subtalker temperature</span><input type="number" min="0.01" max="2" step="0.05" value={draft.subtalker_temperature} onChange={(e) => setDraft({ ...draft, subtalker_temperature: Number(e.target.value) })} /></label>
-        <label><span>Subtalker top-p</span><input type="number" min="0.01" max="1" step="0.05" value={draft.subtalker_top_p} onChange={(e) => setDraft({ ...draft, subtalker_top_p: Number(e.target.value) })} /></label>
-        <label><span>Subtalker top-k</span><input type="number" min="1" max="1000" step="1" value={draft.subtalker_top_k} onChange={(e) => setDraft({ ...draft, subtalker_top_k: Number(e.target.value) })} /></label>
-        <label><span>Max new tokens</span><input type="number" min="64" max="8192" step="64" value={draft.max_new_tokens} onChange={(e) => setDraft({ ...draft, max_new_tokens: Number(e.target.value) })} /></label>
-      </div></details>
-      <EditorialInput markdown={markdown} setMarkdown={updateMarkdown} />
-      <button className="primary-button" disabled={busy || !draft.voice_id}><Plus size={17} /> Crear proyecto</button>
-    </form> : <section className="project-workspace">
-      <div className="panel project-editor">
-        <div className="panel-heading"><div><span className="kicker">REVISION {detail.revision?.number}</span><h2>{detail.title}</h2></div><StatusBadge status={detail.status === 'generating' ? 'running' : detail.status === 'ready' ? 'complete' : 'queued'} /></div>
-        <EditorialInput markdown={markdown} setMarkdown={updateMarkdown} />
-        <div className="project-actions">
-          <button className="soft-button" disabled={busy || activeRun || markdown === detail.revision?.markdown} onClick={() => { const submittedMarkdown = markdown; const submittedEditorVersion = editorVersion.current; void execute(async () => { const revised = await api.reviseProject(detail.id, submittedMarkdown); projectLoads.current.invalidate(); setDetail(revised); editorRevisionId.current = revised.revision?.id ?? null; if (editorVersion.current === submittedEditorVersion) { editorDirty.current = false; setMarkdown(revised.revision?.markdown ?? submittedMarkdown) } return revised }, 'Nueva revisión guardada. Los takes compatibles se conservaron.') }}><Check size={16} /> Guardar revisión</button>
-          <button className="primary-button" disabled={busy || activeRun || detail.segments.every((row) => row.selected_take_id)} onClick={() => void execute(() => api.runProject(detail.id), 'Generación por bloques encolada.')}><Sparkles size={16} /> Generar faltantes</button>
-          <button className="soft-button" disabled={busy || detail.segments.some((row) => !row.selected_take_id)} onClick={() => void execute(() => api.previewProject(detail.id), 'Preview CPU creado sin invocar TTS.')}><AudioWaveform size={16} /> Preview</button>
-          <button className="soft-button" disabled={busy || detail.segments.some((row) => !row.selected_take_id)} onClick={() => void execute(() => api.assembleProject(detail.id), 'Assembly final creado y auditado.')}><Download size={16} /> Final</button>
-        </div>
-        {runs[0] && <div className="project-run"><span>Run {runs[0].status}{activeRun ? ' · los cambios y nuevas generaciones están bloqueados' : ''}</span><div className="progress"><i style={{ width: `${runs[0].progress * 100}%` }} /></div>{runs[0].error && <p className="error-copy">{runs[0].error}</p>}</div>}
-      </div>
-      <div className="segment-stack">{detail.segments.map((segment) => <article className="panel segment-card" key={segment.id}>
-        <header><span>{String(segment.position + 1).padStart(2, '0')}</span><p>{segment.text}</p><em>{segment.pause_after_ms ? `${(segment.pause_after_ms / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}s` : 'sin pausa'}</em></header>
-        <div className="take-strip">{(takes[segment.id] ?? []).map((take) => <div className={take.selected ? 'take-card selected' : 'take-card'} key={take.id}>
-          <div><strong>Toma {take.attempt}</strong><small>{take.status} · seed {take.seed}</small></div>
-          <audio controls preload="none" src={`/api/takes/${take.id}/audio`} />
-          <div className="qc-chips">{take.quality_reports.map((qc) => <span className={qc.verdict} title={qc.reasons.join(' · ')} key={qc.id}>{qc.validator.split('-')[0]} · {qc.verdict}</span>)}</div>
-          <details className="take-evidence"><summary>Evidencia y procedencia</summary>
-            <dl><div><dt>Modelo</dt><dd>{take.model}</dd></div><div><dt>Trim</dt><dd>{take.trim_threshold_db} dB · {take.trim_padding_ms} ms</dd></div><div><dt>WAV</dt><dd title={take.trimmed_sha256}>{shortHash(take.trimmed_sha256)}</dd></div><div><dt>Referencia</dt><dd title={take.voice_reference_sha256}>{shortHash(take.voice_reference_sha256)}</dd></div></dl>
-            <details className="raw-evidence"><summary>Sampling resuelto</summary><pre>{JSON.stringify(take.sampling, null, 2)}</pre></details>
-            {take.quality_reports.map((qc) => <div className="quality-evidence" key={`${qc.id}-evidence`}><strong>{qc.validator}</strong>
-              <span>WER {qc.wer == null ? '—' : qc.wer.toFixed(3)} · CER {qc.cer == null ? '—' : qc.cer.toFixed(3)} · cobertura {qc.token_coverage == null ? '—' : qc.token_coverage.toFixed(3)}</span>
-              {!!qc.block_coverages.length && <span>Bloques: {qc.block_coverages.map((value, index) => `${index + 1}:${value.toFixed(2)}`).join(' · ')}</span>}
-              {!!qc.missing_block_indexes.length && <span>Bloques faltantes: {qc.missing_block_indexes.map((index) => index + 1).join(' · ')}</span>}
-              {!!qc.leaked_reference_phrases.length && <span>Fuga de referencia: {qc.leaked_reference_phrases.join(' · ')}</span>}
-              {!!qc.identity_windows.length && <span>Identidad: mediana {qc.identity_median?.toFixed(3) ?? '—'} · mínima {qc.identity_min?.toFixed(3) ?? '—'} · ventanas {qc.identity_windows.map((value) => value.toFixed(3)).join(' · ')}</span>}
-              {qc.transcript && <p><b>Transcripción:</b> {qc.transcript}</p>}
-              {!!qc.alignment.length && <details className="raw-evidence"><summary>Alineación · {qc.alignment.length} marcas</summary><pre>{JSON.stringify(qc.alignment, null, 2)}</pre></details>}
-              {!!qc.reasons.length && <p className="error-copy">{qc.reasons.join(' · ')}</p>}
-            </div>)}
-          </details>
-          <div className="take-actions"><a className="download-button" href={`/api/takes/${take.id}/download`} download><Download size={14} /> WAV</a><a className="download-button" href={`/api/takes/${take.id}/download?raw=true`} download><Download size={14} /> Raw</a></div>
-          {!take.selected && <button className="soft-button" onClick={() => {
-            const override = take.status !== 'pass'
-            const reason = override ? window.prompt('Motivo obligatorio del override:') ?? '' : undefined
-            if (override && !reason) return
-            void execute(() => api.selectTake(detail.id, segment.id, take.id, override, reason), 'Take seleccionado.')
-          }}>Elegir</button>}
-        </div>)}</div>
-        <button className="add-row" disabled={busy || activeRun} onClick={() => void execute(() => api.generateTake(detail.id, segment.id), 'Nueva toma manual encolada.')}><Plus size={15} /> Otra toma</button>
-      </article>)}</div>
-      {latestAssembly && <div className="panel assembly-player"><div><span className="kicker">{latestAssembly.kind}</span><h2>Assembly · {latestAssembly.audit_status}</h2></div><audio controls src={`/api/assemblies/${latestAssembly.id}/audio`} /><a className="download-button" href={`/api/assemblies/${latestAssembly.id}/download`}><Download size={15} /> WAV</a><a className="download-button" href={`/api/assemblies/${latestAssembly.id}/manifest`}>Manifest</a>
-        {latestAssembly.kind === 'final' && latestAssembly.audit_status !== 'pass' && latestAssembly.audit_status !== 'overridden' && <button className="soft-button" onClick={() => { const reason = window.prompt('Motivo obligatorio para aprobar la auditoría:'); if (reason) void execute(() => api.assembleProject(detail.id, reason), 'Assembly aprobado con override auditable.') }}>Aprobar con motivo</button>}</div>}
-    </section>}
-  </div>
-}
-
-function EditorialInput({ markdown, setMarkdown }: { markdown: string; setMarkdown: (value: string) => void }) {
-  return <label className="text-field editorial-input"><span>Markdown editorial · sólo texto hablado y pausas standalone [Ns]</span>
-    <textarea rows={16} value={markdown} onChange={(event) => setMarkdown(event.target.value)} />
-    <small><label className="file-inline">Importar .md<input type="file" accept=".md,text/markdown,text/plain" onChange={(event) => { const file = event.target.files?.[0]; if (file) void file.text().then(setMarkdown) }} /></label>{markdown.length.toLocaleString()} caracteres</small>
-  </label>
 }
 
 function Studio({ voices, jobs, notify, refresh }: {
