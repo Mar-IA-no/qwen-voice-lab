@@ -27,10 +27,11 @@ import {
   X,
 } from 'lucide-react'
 import { api } from './api'
+import { ScoreWorkspace } from './ScoreWorkspace'
 import { ProjectWorkshop } from './ProjectWorkshop'
-import type { ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Project, Prosody, Segment, Voice } from './types'
+import type { ScoreWorkspaceCatalog, ArchiveAsset, AuthStatus, Capabilities, Comparison, Job, Language, Project, Prosody, Segment, Voice } from './types'
 
-type View = 'studio' | 'projects' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
+type View = 'score' | 'studio' | 'projects' | 'voices' | 'archive' | 'compare' | 'activity' | 'settings'
 
 const DEFAULT_ES = 'Cerrá los ojos por un momento y dejá que el sonido abra un espacio tranquilo. Observá qué imagen aparece primero, sin buscarla.'
 const DEFAULT_EN = 'Close your eyes for a moment and let the sound open a quiet space. Notice which image appears first, without searching for it.'
@@ -68,7 +69,12 @@ function engineClass(capabilities: Capabilities | null) {
 
 function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null)
-  const [view, setView] = useState<View>('studio')
+  const [view, setView] = useState<View>('score')
+  const [scoreCatalog, setScoreCatalog] = useState<ScoreWorkspaceCatalog | null>(null)
+  const [scoreCatalogError, setScoreCatalogError] = useState<string | null>(null)
+  const [showCollectionSources, setShowCollectionSources] = useState(false)
+  const [scoreEditorState, setScoreEditorState] = useState({ busy: false, dirty: false })
+  const [catalogChecked, setCatalogChecked] = useState(false)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [voices, setVoices] = useState<Voice[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
@@ -79,6 +85,19 @@ function App() {
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantLoaded, setAssistantLoaded] = useState(false)
   const assistantUrl = capabilities?.codex_chat_url
+
+  const loadScoreCatalog = useCallback(async (initial = false) => {
+    try {
+      const catalog = await api.scoreWorkspaces()
+      setScoreCatalog(catalog)
+      setScoreCatalogError(null)
+      if (initial) setView(catalog.workspaces.length || catalog.editorial_mode ? 'score' : 'studio')
+    } catch (reason) {
+      setScoreCatalogError((reason as Error).message)
+      if (initial) setView('score')
+    } finally { setCatalogChecked(true) }
+  }, [])
+  const editorialMode = scoreCatalog?.editorial_mode ?? true
 
   const refresh = useCallback(async (quiet = false) => {
     try {
@@ -105,9 +124,18 @@ function App() {
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    if (!auth || (auth.required && !auth.authenticated)) return
+    if (!catalogChecked) void loadScoreCatalog(true)
+  }, [auth, catalogChecked, loadScoreCatalog])
+
+  useEffect(() => {
+    if (editorialMode || !catalogChecked) return
     const timer = window.setInterval(() => void refresh(true), 1800)
     return () => window.clearInterval(timer)
-  }, [refresh])
+  }, [refresh, editorialMode, catalogChecked])
 
   useEffect(() => {
     if (!toast) return
@@ -122,6 +150,13 @@ function App() {
     return () => { document.body.style.overflow = previous }
   }, [assistantOpen])
 
+  const navigateView = (next: View) => {
+    if (scoreEditorState.busy || next === view) return
+    if (scoreEditorState.dirty && !window.confirm('Hay cambios sin guardar. Podés exportar el borrador antes de salir. ¿Descartar los cambios y continuar?')) return
+    setView(next)
+  }
+  const sourceProjects = new Set(scoreCatalog?.workspaces.flatMap((workspace) => workspace.source_project_ids ?? []) ?? [])
+  const otherProjects = editorialMode && !showCollectionSources ? projects.filter((project) => !sourceProjects.has(project.id)) : projects
   const notify = (kind: 'ok' | 'error', text: string) => setToast({ kind, text })
   const activeJobs = jobs.filter((job) => job.status === 'running' || job.status === 'queued')
 
@@ -135,37 +170,38 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar view={view} setView={setView} activeJobs={activeJobs.length} />
+      <Sidebar view={view} setView={navigateView} navigationDisabled={scoreEditorState.busy} activeJobs={activeJobs.length} editorialMode={editorialMode} hasScores={!!scoreCatalog?.workspaces.length || !!scoreCatalogError} />
       <main className="main-shell">
         <header className="topbar">
           <div>
             <p className="eyebrow">LOCAL VOICE INSTRUMENT</p>
-            <h1>{pageTitle(view)}</h1>
+            <h1>{view === 'projects' && editorialMode ? 'Otros trabajos' : pageTitle(view)}</h1>
           </div>
           <div className="topbar-actions">
             {assistantUrl && <button type="button" className={`soft-button assistant-trigger${assistantOpen ? ' active' : ''}`} onClick={() => { setAssistantLoaded(true); setAssistantOpen((open) => !open) }} aria-expanded={assistantOpen} aria-controls="voice-lab-assistant" title="Abrir el asistente de Codex">
               <MessageCircle size={17} /> <span>Asistente</span>
             </button>}
-            <button className="icon-button" onClick={() => void refresh()} title="Actualizar">
+            <button className="icon-button" disabled={scoreEditorState.busy} onClick={() => { void refresh(); void loadScoreCatalog() }} title="Actualizar">
               <RefreshCw size={17} />
             </button>
-            <div className={`engine-pill ${engineClass(capabilities)}`}>
+            <div className={`engine-pill ${editorialMode ? 'standby' : engineClass(capabilities)}`}>
               <span className="status-dot" />
-              {engineLabel(capabilities)}
+              {editorialMode ? 'Escucha y guion' : engineLabel(capabilities)}
             </div>
           </div>
         </header>
 
-        {loading ? (
+        {loading || !catalogChecked ? (
           <LoadingState />
         ) : (
           <div className="page">
-            {view === 'studio' && <Studio voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
-            {view === 'projects' && <ProjectWorkshop projects={projects} voices={voices} notify={notify} refresh={refresh} />}
-            {view === 'voices' && <Voices voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
+            {view === 'score' && <ScoreWorkspace catalog={scoreCatalog} catalogError={scoreCatalogError} reloadCatalog={() => void loadScoreCatalog()} openOtherWorks={() => setView('projects')} onEditorState={setScoreEditorState} />}
+            {!editorialMode && view === 'studio' && <Studio voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
+            {view === 'projects' && <>{editorialMode && <label className="score-source-toggle"><input type="checkbox" checked={showCollectionSources} onChange={(event) => setShowCollectionSources(event.target.checked)} /><span>Mostrar también proyectos de las colecciones</span></label>}<ProjectWorkshop key={editorialMode ? (showCollectionSources ? 'all-projects' : 'previous-projects') : 'operator-projects'} projects={otherProjects} voices={voices} notify={notify} refresh={refresh} editorialMode={editorialMode} /></>}
+            {!editorialMode && view === 'voices' && <Voices voices={voices} jobs={jobs} notify={notify} refresh={refresh} />}
             {view === 'archive' && <ArchivePage assets={archive} />}
-            {view === 'compare' && <Compare voices={voices} jobs={jobs} notify={notify} />}
-            {view === 'activity' && <ActivityPage jobs={jobs} voices={voices} notify={notify} />}
+            {!editorialMode && view === 'compare' && <Compare voices={voices} jobs={jobs} notify={notify} />}
+            {view === 'activity' && <ActivityPage jobs={jobs} voices={voices} notify={notify} readOnly={editorialMode} />}
             {view === 'settings' && <Settings capabilities={capabilities} voices={voices} jobs={jobs} auth={auth} onLogout={async () => {
               const nextAuth = await api.logout()
               setAuth(nextAuth)
@@ -205,10 +241,11 @@ function LoginScreen({ onLogin }: { onLogin: (token: string) => Promise<void> })
   }}><div className="brand-mark"><AudioLines size={28} /></div><span className="kicker">PRIVATE VOICE INSTRUMENT</span><h1>Qwen Voice Lab</h1><p>Ingresá el token de esta instalación para acceder a voces, renders y controles GPU.</p><label><span>Token de acceso</span><input type="password" autoComplete="current-password" value={token} onChange={(event) => setToken(event.target.value)} autoFocus /></label>{error && <div className="warning-box">{error}</div>}<button className="primary-button" disabled={submitting || !token}>{submitting ? 'Verificando…' : 'Entrar al laboratorio'}</button></form></main>
 }
 
-function Sidebar({ view, setView, activeJobs }: { view: View; setView: (view: View) => void; activeJobs: number }) {
+function Sidebar({ view, setView, activeJobs, editorialMode, hasScores, navigationDisabled }: { view: View; setView: (view: View) => void; activeJobs: number; editorialMode: boolean; hasScores: boolean; navigationDisabled: boolean }) {
   const items: { id: View; label: string; icon: ReactNode }[] = [
+    ...(hasScores ? [{ id: 'score' as View, label: 'Partitura', icon: <AudioLines size={19} /> }] : []),
     { id: 'studio', label: 'Estudio', icon: <AudioWaveform size={19} /> },
-    { id: 'projects', label: 'Proyectos', icon: <AudioLines size={19} /> },
+    { id: 'projects', label: editorialMode ? 'Otros trabajos' : 'Proyectos', icon: <AudioLines size={19} /> },
     { id: 'voices', label: 'Voces', icon: <Library size={19} /> },
     { id: 'archive', label: 'Archivo', icon: <Archive size={19} /> },
     { id: 'compare', label: 'Comparar', icon: <GitCompareArrows size={19} /> },
@@ -222,8 +259,8 @@ function Sidebar({ view, setView, activeJobs }: { view: View; setView: (view: Vi
         <div><strong>Qwen</strong><span>Voice Lab</span></div>
       </div>
       <nav>
-        {items.map((item) => (
-          <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>
+        {items.filter((item) => !editorialMode || ['score', 'projects', 'archive', 'activity', 'settings'].includes(item.id)).map((item) => (
+          <button key={item.id} disabled={navigationDisabled} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>
             {item.icon}<span>{item.label}</span>
             {item.id === 'activity' && activeJobs > 0 && <em>{activeJobs}</em>}
           </button>
@@ -593,9 +630,9 @@ function ComparisonResult({ job, voice }: { job: Job; voice?: Voice }) {
   return <article className="result-card"><div className="result-head"><div><strong>{voice?.name ?? 'Voz'}</strong><span>{voice?.kind}</span></div><StatusBadge status={job.status} /></div>{job.status === 'complete' ? <><audio controls preload="metadata" src={`/api/jobs/${job.id}/audio`} /><DownloadButton job={job} /><Metrics metrics={job.metrics} /></> : <JobProgress job={job} />}{job.error && <p className="error-copy">{job.error}</p>}</article>
 }
 
-function ActivityPage({ jobs, voices, notify }: { jobs: Job[]; voices: Voice[]; notify: (kind: 'ok' | 'error', text: string) => void }) {
+function ActivityPage({ jobs, voices, notify, readOnly = false }: { jobs: Job[]; voices: Voice[]; notify: (kind: 'ok' | 'error', text: string) => void; readOnly?: boolean }) {
   const cancel = async (job: Job) => { try { await api.cancel(job.id); notify('ok', 'Trabajo cancelado.') } catch (error) { notify('error', (error as Error).message) } }
-  return <div className="stack"><section className="stats-row"><Stat icon={<Activity />} label="Total" value={jobs.length.toString()} /><Stat icon={<Clock3 />} label="En cola" value={jobs.filter((j) => j.status === 'queued').length.toString()} /><Stat icon={<AudioWaveform />} label="Completos" value={jobs.filter((j) => j.status === 'complete').length.toString()} /><Stat icon={<Mic2 />} label="Voces" value={voices.length.toString()} /></section><section className="panel jobs-panel"><div className="panel-heading"><div><span className="kicker">RUN LEDGER</span><h2>Actividad reciente</h2></div></div>{!jobs.length ? <EmptyState icon={<Activity />} title="Sin actividad" text="Los diseños, renders y comparaciones quedarán registrados acá." /> : <div className="job-list">{jobs.map((job) => <article key={job.id} className="job-row"><div className="job-main"><div className={`job-icon ${job.kind}`}><AudioWaveform size={18} /></div><div><strong>{job.title}</strong><span>{job.id} · {new Date(job.created_at).toLocaleString()}</span></div></div><div className="job-state"><StatusBadge status={job.status} />{['queued', 'running'].includes(job.status) && <button className="icon-button danger" onClick={() => void cancel(job)}><CircleStop size={16} /></button>}</div>{job.status === 'running' && <div className="progress"><i style={{ width: `${job.progress * 100}%` }} /></div>}{job.status === 'complete' && <div className="job-output"><div className="job-audio"><audio controls preload="none" src={`/api/jobs/${job.id}/audio`} /><DownloadButton job={job} /></div><Metrics metrics={job.metrics} /></div>}{job.error && <p className="error-copy">{job.error}</p>}</article>)}</div>}</section></div>
+  return <div className="stack"><section className="stats-row"><Stat icon={<Activity />} label="Total" value={jobs.length.toString()} /><Stat icon={<Clock3 />} label="En cola" value={jobs.filter((j) => j.status === 'queued').length.toString()} /><Stat icon={<AudioWaveform />} label="Completos" value={jobs.filter((j) => j.status === 'complete').length.toString()} /><Stat icon={<Mic2 />} label="Voces" value={voices.length.toString()} /></section><section className="panel jobs-panel"><div className="panel-heading"><div><span className="kicker">RUN LEDGER</span><h2>Actividad reciente</h2></div></div>{!jobs.length ? <EmptyState icon={<Activity />} title="Sin actividad" text="Los diseños, renders y comparaciones quedarán registrados acá." /> : <div className="job-list">{jobs.map((job) => <article key={job.id} className="job-row"><div className="job-main"><div className={`job-icon ${job.kind}`}><AudioWaveform size={18} /></div><div><strong>{job.title}</strong><span>{job.id} · {new Date(job.created_at).toLocaleString()}</span></div></div><div className="job-state"><StatusBadge status={job.status} />{!readOnly && ['queued', 'running'].includes(job.status) && <button className="icon-button danger" onClick={() => void cancel(job)}><CircleStop size={16} /></button>}</div>{job.status === 'running' && <div className="progress"><i style={{ width: `${job.progress * 100}%` }} /></div>}{job.status === 'complete' && <div className="job-output"><div className="job-audio"><audio controls preload="none" src={`/api/jobs/${job.id}/audio`} /><DownloadButton job={job} /></div><Metrics metrics={job.metrics} /></div>}{job.error && <p className="error-copy">{job.error}</p>}</article>)}</div>}</section></div>
 }
 
 function Settings({ capabilities, voices, jobs, auth, onLogout }: { capabilities: Capabilities | null; voices: Voice[]; jobs: Job[]; auth: AuthStatus | null; onLogout: () => Promise<void> }) {
@@ -632,6 +669,6 @@ function EmptyState({ icon, title, text }: { icon: ReactNode; title: string; tex
 function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) { return <div className="stat-card"><div>{icon}</div><span>{label}</span><strong>{value}</strong></div> }
 function Setting({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div> }
 function LoadingState() { return <div className="loading-state"><div className="loading-wave"><i /><i /><i /><i /><i /></div><span>Preparando el estudio…</span></div> }
-function pageTitle(view: View) { return ({ studio: 'Estudio de síntesis', projects: 'Producción de largo formato', voices: 'Biblioteca de voces', archive: 'Archivo de escucha', compare: 'Laboratorio comparativo', activity: 'Actividad y métricas', settings: 'Sistema local' })[view] }
+function pageTitle(view: View) { return ({ score: 'Partitura', studio: 'Estudio de síntesis', projects: 'Producción de largo formato', voices: 'Biblioteca de voces', archive: 'Archivo de escucha', compare: 'Laboratorio comparativo', activity: 'Actividad y métricas', settings: 'Sistema local' })[view] }
 
 export default App

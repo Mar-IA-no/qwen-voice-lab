@@ -46,6 +46,7 @@ Voice work is easy to generate and hard to evaluate. A promising identity can di
 | ✦ | **Design original voices** | VoiceDesign instruction, carrier text, language, seed, sample WAV and explicit promotion decision |
 | ◉ | **Clone authorized references** | Exact transcript, consent confirmation, audio hash, duration, tags and local provenance |
 | ≋ | **Compose scored locutions** | Ordered text blocks, exact post-block pauses and per-block `neutral` / `T` / `S` / `D` / `R` labels |
+| ▤ | **Edit existing locutions** | A pinned full script, reversible block order and pauses, saved versions and CPU listening without generation |
 | A/B | **Compare 2–5 identities** | The same text, language and seed for every voice in the run |
 | ↧ | **Recover every result** | Persistent job history, browser playback and direct WAV download from Studio, Compare and Activity |
 | ◫ | **Measure the render** | Model load, generation, first audio, duration, RTF, peak VRAM, byte size and SHA-256 |

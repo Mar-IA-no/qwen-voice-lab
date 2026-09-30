@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { beaconActive, beaconTime, crossfadeStartTime, effectiveSpeed, fadeGain, loopGains, newBlock, shouldStartCrossfade, validBlocks } from './workshop-timing'
+import { beaconActive, beaconTime, crossfadeStartTime, effectiveSpeed, fadeGain, loopGains, newBlock, shouldPauseBeaconBuffering, shouldStartCrossfade, validBlocks } from './workshop-timing'
 
 describe('workshop timing', () => {
   it('inherits general speed only for null block speed, and includes take baseline', () => {
@@ -38,5 +38,14 @@ describe('workshop timing', () => {
     expect(shouldStartCrossfade(true, false, 0.5)).toBe(false)
     expect(shouldStartCrossfade(false, false, 0.5)).toBe(true)
     expect(shouldStartCrossfade(false, true, 0.5)).toBe(false)
+  })
+
+  it('does not cancel initial Beacon loading or a pending first play, but pauses buffering after audible playback', () => {
+    expect(shouldPauseBeaconBuffering(true, false, false)).toBe(false)
+    expect(shouldPauseBeaconBuffering(false, true, false)).toBe(false)
+    expect(shouldPauseBeaconBuffering(false, true, true)).toBe(false)
+    expect(shouldPauseBeaconBuffering(false, false, false)).toBe(false)
+    expect(shouldPauseBeaconBuffering(false, false, true)).toBe(true)
+    expect(shouldPauseBeaconBuffering(true, false, true)).toBe(false)
   })
 })

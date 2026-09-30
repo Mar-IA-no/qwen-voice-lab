@@ -107,3 +107,61 @@ The current content gate retries when WER exceeds 0.12, token coverage is below 
 The CUDA gate must use private, authorized assets outside Git and record model hashes, Git commit, settings, and output manifests. It includes all six advertised languages and the known Italian regression: the block containing “Senti delle voci?” must not jump identity or omit its following block, and the final expected words must be present. No CUDA smoke result is embedded in the public repository.
 
 `scripts/run_private_longform_acceptance.py` exercises that technical gate against a live installation and writes WAVs, manifests, ASR/identity evidence and hashes only to the explicitly supplied non-Git directory. Its report intentionally leaves `human_listening_review` pending: a human listener, not the script, owns perceptual acceptance.
+
+## Edit an existing locution without generation
+
+When an operator configures a pinned collection, **Partitura** opens its
+principal route as one script. Older projects remain in **Otros trabajos**,
+with an explicit control to include the collection's source projects.
+Existing project recordings and revisions remain unchanged.
+
+1. Read the script and use **Ir a una etapa** or the voice/silence diagram to
+   reach a block. Variants are listed separately and are added deliberately.
+2. Change seconds of initial silence or a block's post-pause. Move, remove or
+   add existing blocks. **Deshacer** and **Rehacer** operate on the local draft.
+3. **Guardar versión** persists a new composition. A concurrent save preserves
+   your draft and offers JSON export or reloading the saved version. Unsaved
+   drafts are not automatically recovered after closing the browser.
+4. **Escuchar todo**, select checkboxes and **Escuchar selección**, or use
+   **Escuchar este bloque**. Save edits first. Montage uses existing audio on CPU;
+   it does not synthesize, transcribe, align or produce a validated final.
+5. Play, pause, seek or stop the prepared audio. Beacon has a separate switch
+   and volume. Downloads contain voice WAV and the exact timing manifest.
+6. **Historial de versiones** can restore a previous composition as a new
+   version. Restoring the original catalog can include variants; the UI marks
+   this explicitly. It does not delete subsequent versions.
+
+Opening a page does not request a montage or autoplay. A listening action
+prepares a saved snapshot and attempts playback; browsers may require pressing
+**Reproducir** after preparation. Editing, selecting a different set, restoring
+or leaving stops the current listen. Block positions become sample-exact for
+the prepared selection; positions outside that selection remain estimates.
+
+### Collection and API contract
+
+Private JSON collections live below `data/score_workspaces/collections/` and use
+`score-workspace-collection-v1`. The validated schema in `score_workspaces.py`
+requires explicit source IDs and hashes, block order, `main`/`variant` roles,
+stage titles, pauses and optional response markers. A catalog file is not a
+selector for whichever project was updated last. Keep the collection files,
+score database and derived previews with the original project/audio backup.
+
+- `GET /api/score-workspaces` lists configured collections.
+- `GET /api/score-workspaces/{id}` reads the saved composition.
+- `GET /api/score-workspaces/{id}/revisions` lists its history.
+- `POST .../revisions` sends `expected_revision_id`, `lead_in_ms` and ordered
+  `{source_key, pause_after_ms}` blocks.
+- `POST .../restore` sends `expected_revision_id` and the source `revision_id`.
+- `POST .../preview` sends `revision_id` and optionally unique `source_keys`.
+- Returned scoped URLs expose authenticated audio, download, manifest and Beacon.
+
+Limits default to 256 blocks, 60 seconds per silence, 3600 seconds per preview,
+256 KiB per write request and 16 MiB disk headroom. Preview limits are configurable
+through `QVL_SCORE_PREVIEW_MAX_SOURCES`,
+`QVL_SCORE_PREVIEW_MAX_DURATION_SECONDS` and
+`QVL_SCORE_PREVIEW_DISK_HEADROOM_BYTES`. A busy montage returns 409; no job or
+model is launched. Changing a pinned catalog or source requires explicit
+operator resolution rather than silently rebasing an existing composition.
+
+Listening and source validation are technical checks. They do not establish
+perceptual quality, human approval or participant-protocol readiness.

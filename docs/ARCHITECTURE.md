@@ -62,3 +62,39 @@ The application binds to loopback by default, requires a token for non-loopback 
 Projects are additive beside ordinary jobs. A strict editorial compiler turns spoken paragraphs and standalone `[Ns]` pauses into stable segments. Each segment owns immutable takes, provenance and quality reports. TTS produces speech-only files; deterministic trimming and pause assembly run on CPU. Pause-only revisions keep stable IDs and expose hash-compatible historical takes; attempt numbers and deterministic seeds continue across those revisions. Revision publication and run creation share one SQLite exclusion boundary: a run can target only the still-current revision, and a revision cannot publish while that project has an active run. Take and assembly serving reject symlinks, open each asset once, verify the SHA-256 of an immutable byte snapshot, and return only that snapshot. Terminal run state and its reconciled project state commit in one SQLite transaction; cancellation records a terminal failure before shutdown continues, and startup conservatively repairs every project left as `generating`.
 
 The local Qwen3-ASR/ForcedAligner validator runs in a separate process and Python environment because its Transformers pin conflicts with Qwen3-TTS 0.1.1. TTS and validation require serial GPU admission. Validator termination can invoke an installation-specific cleanup command when admission creates a detached scope. Final assemblies share the preview timeline builder and add a whole-output transcript audit with per-source-block monotonic coverage and reference-text leakage detection. See [Long-form production](LONG_FORM_PRODUCTION.md) for the endpoint sequence, syntax, thresholds and deployment acceptance.
+
+## Listening score workspace
+
+A configured private collection opens a separate **Partitura** workspace. Its
+ordered catalog pins project, editorial revision, segment, compatible selected
+take, text SHA-256 and audio SHA-256. It copies the complete catalog and source
+provenance into immutable composition snapshots. Missing or changed sources
+make the collection unavailable instead of selecting a newer take implicitly.
+
+Compositions live in `data/score_workspaces/score_workspaces.sqlite3`, separate
+from the original project catalog. Edits reorder existing blocks and change
+initial or post-block silence; they cannot edit speech or replace recordings.
+Save and restore use a transaction with an expected-revision comparison. Restore
+adds a version. The initial principal route excludes variants; the catalog
+snapshot and variants remain recoverable.
+
+The listening API performs a bounded CPU montage of one saved snapshot. Full
+listening includes its initial silence; a block or selection follows snapshot
+order and includes post-block pauses without initial silence. A filesystem lock
+permits one montage per installation. Source count, duration, body size and disk
+space are checked before conversion; actual samples and disk are checked before
+publication. The output is mono PCM16 at 24 kHz. Baseline take tempo and editorial
+tempo are applied together once, without changing authored pauses.
+
+Completed WAV and timing manifest hashes are persisted after both files finish.
+Authenticated endpoints serve those exact bytes. Beacon remains a separately
+authenticated track fixed by source hash; it is not mixed into downloads.
+Responses and variable conversational stretches have no invented duration and
+are omitted from this editing listen.
+
+In editorial mode the UI exposes listening and reversible editing, separates
+older work, hides generation controls and avoids generation polling. Ordinary
+installation APIs retain their existing authorization and generation contracts;
+editorial mode is a workflow choice, not an additional security boundary.
+Changing draft, revision, selection or section invalidates listening and stops
+voice and Beacon. An asynchronous result cannot reactivate an invalidated player.

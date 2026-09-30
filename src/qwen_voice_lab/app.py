@@ -13,6 +13,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import __version__
@@ -54,6 +56,15 @@ from .models import (
     VoiceKind,
     VoiceView,
 )
+from .score_previews import ScorePreviewBusy, ScorePreviewCreate, ScorePreviews
+from .score_workspaces import (
+    MAX_SCORE_REQUEST_BYTES,
+    ScoreConflict,
+    ScoreRevisionCreate,
+    ScoreRevisionRestore,
+    ScoreUnavailable,
+    ScoreWorkspaces,
+)
 from .service import JobManager, new_id
 from .starter import seed_starter_voices
 from .storage import Store
@@ -73,6 +84,48 @@ def session_digest(access_token: str) -> str:
     return hmac.new(
         access_token.encode("utf-8"), b"qwen-voice-lab-session-v1", hashlib.sha256
     ).hexdigest()
+
+
+async def read_score_payload(request: Request, model: type[BaseModel]) -> BaseModel:
+    """Bound incoming composition JSON before parsing or looking up sources."""
+    body = bytearray()
+    limit = request.app.state.settings.score_request_max_bytes
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > min(limit, MAX_SCORE_REQUEST_BYTES):
+            raise HTTPException(413, "Score request exceeds the configured size limit.")
+        body.extend(chunk)
+    try:
+        return model.model_validate_json(bytes(body))
+    except ValidationError as exc:
+        raise HTTPException(422, "Invalid score request fields or values.") from exc
+
+
+def score_audio_response(audio: bytes, media_type: str, request: Request,
+                         headers: dict[str, str] | None = None) -> Response:
+    """Serve ranges only after the complete immutable asset was authenticated."""
+    response_headers = {"Cache-Control": "no-store", "Accept-Ranges": "bytes",
+                        **(headers or {})}
+    requested = request.headers.get("range")
+    if not requested:
+        return Response(audio, media_type=media_type, headers=response_headers)
+    matched = re.fullmatch(r"bytes=(\d*)-(\d*)", requested.strip())
+    size = len(audio)
+    if matched and any(matched.groups()):
+        first, last = matched.groups()
+        # Bound parsing work even when a client supplies a huge integer.
+        if len(first) <= 20 and len(last) <= 20:
+            if first:
+                start = int(first)
+                end = min(int(last), size - 1) if last else size - 1
+            else:
+                start = max(0, size - int(last))
+                end = size - 1
+            if 0 <= start <= end < size:
+                response_headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+                return Response(audio[start:end + 1], status_code=206,
+                                media_type=media_type, headers=response_headers)
+    response_headers["Content-Range"] = f"bytes */{size}"
+    return Response(status_code=416, headers=response_headers)
 
 
 class AccessTokenMiddleware:
@@ -107,6 +160,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     seed_starter_voices(settings, store)
     manager = JobManager(settings, store)
     projects = LongFormManager(settings, store, manager.engine, manager.engine_lock)
+    score_workspaces = ScoreWorkspaces(settings, store)
+    score_previews = ScorePreviews(settings, score_workspaces)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -130,6 +185,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.store = store
     app.state.manager = manager
     app.state.projects = projects
+    app.state.score_workspaces = score_workspaces
+    app.state.score_previews = score_previews
     app.add_middleware(AccessTokenMiddleware, access_token=settings.access_token)
     app.add_middleware(
         CORSMiddleware,
@@ -184,6 +241,102 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "engine": settings.engine,
             "queue_depth": manager.queue.qsize(),
         }
+
+    @app.get("/api/score-workspaces")
+    def list_score_workspaces() -> dict:
+        return score_workspaces.list()
+
+    @app.get("/api/score-workspaces/{workspace_id}")
+    def get_score_workspace(workspace_id: str) -> dict:
+        try:
+            return score_workspaces.detail(workspace_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score workspace not found.") from exc
+
+    @app.get("/api/score-workspaces/{workspace_id}/revisions")
+    def list_score_revisions(workspace_id: str) -> list[dict]:
+        try:
+            return score_workspaces.revisions(workspace_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score workspace not found.") from exc
+
+    @app.get("/api/score-workspaces/{workspace_id}/revisions/{revision_id}")
+    def get_score_revision(workspace_id: str, revision_id: str) -> dict:
+        try:
+            return score_workspaces.detail(workspace_id, revision_id=revision_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score revision not found.") from exc
+
+    @app.post("/api/score-workspaces/{workspace_id}/revisions")
+    async def save_score_revision(workspace_id: str, request: Request) -> dict:
+        payload = await read_score_payload(request, ScoreRevisionCreate)
+        try:
+            return score_workspaces.save(workspace_id, payload)
+        except (ScoreConflict, ScoreUnavailable) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "Score workspace not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/score-workspaces/{workspace_id}/restore")
+    async def restore_score_revision(workspace_id: str, request: Request) -> dict:
+        payload = await read_score_payload(request, ScoreRevisionRestore)
+        try:
+            return score_workspaces.restore(workspace_id, payload)
+        except (ScoreConflict, ScoreUnavailable) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "Score revision not found.") from exc
+
+    @app.post("/api/score-workspaces/{workspace_id}/preview")
+    async def create_score_preview(workspace_id: str, request: Request) -> dict:
+        payload = await read_score_payload(request, ScorePreviewCreate)
+        try:
+            return await run_in_threadpool(score_previews.preview, workspace_id, payload)
+        except (ScorePreviewBusy, ScoreUnavailable) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "Score revision not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(422, "Score preview could not be prepared: "
+                                "check its limits, space and pinned sources.") from exc
+
+    @app.get("/api/score-workspaces/{workspace_id}/previews/{preview_id}/audio")
+    @app.get("/api/score-workspaces/{workspace_id}/previews/{preview_id}/download")
+    def get_score_preview_audio(workspace_id: str, preview_id: str, request: Request) -> Response:
+        try:
+            _, audio, _ = score_previews.assets(workspace_id, preview_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score preview not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, "Score preview assets are unavailable or altered.") from exc
+        headers = {"Cache-Control": "no-store"}
+        if request.url.path.endswith("/download"):
+            headers["Content-Disposition"] = f'attachment; filename="{preview_id}.wav"'
+        return score_audio_response(audio, "audio/wav", request, headers)
+
+    @app.get("/api/score-workspaces/{workspace_id}/previews/{preview_id}/manifest")
+    def get_score_preview_manifest(workspace_id: str, preview_id: str) -> Response:
+        try:
+            _, _, manifest = score_previews.assets(workspace_id, preview_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score preview not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, "Score preview assets are unavailable or altered.") from exc
+        return Response(manifest, media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/score-workspaces/{workspace_id}/previews/{preview_id}/beacon")
+    def get_score_preview_beacon(workspace_id: str, preview_id: str,
+                                 request: Request) -> Response:
+        try:
+            audio, media_type = score_previews.beacon(workspace_id, preview_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Score preview Beacon not found.") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, "Pinned Beacon audio is unavailable or altered.") from exc
+        return score_audio_response(audio, media_type, request)
 
     @app.get("/api/capabilities", response_model=Capabilities)
     def capabilities() -> Capabilities:

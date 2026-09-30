@@ -18,6 +18,10 @@ export function shouldStartCrossfade(voicePaused: boolean, crossing: boolean, ne
   return !voicePaused && !crossing && nextGain > 0
 }
 
+export function shouldPauseBeaconBuffering(voicePaused: boolean, starting: boolean, hasPlayed: boolean): boolean {
+  return !voicePaused && !starting && hasPlayed
+}
+
 export function crossfadeStartTime(voiceTime: number, offsetSeconds: number, duration: number): number {
   return Math.min(LOOP_CROSSFADE_SECONDS, beaconTime(voiceTime, offsetSeconds, duration))
 }

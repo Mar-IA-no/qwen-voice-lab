@@ -1,0 +1,38 @@
+{
+  "schema_version": "score-workspace-collection-v1",
+  "id": "example_score",
+  "title": "Example editorial score",
+  "is_default": true,
+  "editorial_mode": true,
+  "lead_in_ms": 10000,
+  "blocks": [
+    {
+      "source_key": "example_opening",
+      "role": "main",
+      "stage_id": "opening",
+      "stage_title": "Opening",
+      "order": 0,
+      "text": "Example spoken paragraph.",
+      "pause_after_ms": 2000,
+      "speech_speed": 1.0,
+      "response_marker": "Wait for a participant response",
+      "source": {
+        "project_id": "project_example",
+        "revision_id": "revision_example",
+        "revision_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "revision_snapshot_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "segment_id": "block_001",
+        "take_id": "take_example",
+        "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "audio_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "beacon": {
+    "project_id": "project_example",
+    "asset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "enabled": false,
+    "offset_seconds": 0,
+    "volume": 0.25
+  }
+}

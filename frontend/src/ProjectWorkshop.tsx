@@ -4,24 +4,13 @@ import { api } from './api'
 import type { Assembly, BeaconSettings, Language, Project, ProjectDetail, ProjectRun, SourceRevision, Take, Voice, WorkshopBlock } from './types'
 import { effectiveSpeed, newBlock, validBlocks } from './workshop-timing'
 import { WorkshopPlayer } from './WorkshopPlayer'
+import { revisionDraft } from './workshop-draft'
 
 type Notify = (kind: 'ok' | 'error', text: string) => void
 type Draft = { blocks: WorkshopBlock[]; lead_pause_ms: number; speech_speed: number; beacon: BeaconSettings }
 const defaultBeacon = (): BeaconSettings => ({ enabled: false, asset_id: null, offset_seconds: 0, volume: 0.25 })
 const emptyDraft = (): Draft => ({ blocks: [newBlock()], lead_pause_ms: 0, speech_speed: 1, beacon: defaultBeacon() })
 
-function revisionDraft(detail: ProjectDetail): Draft {
-  const revision = detail.revision
-  return {
-    blocks: (revision?.blocks?.length ? revision.blocks : detail.segments).map((row) => ({
-      id: row.id, text: row.text, pause_after_ms: row.pause_after_ms, speed: row.speed ?? null,
-      selected_take_id: row.selected_take_id ?? null,
-    })),
-    lead_pause_ms: revision?.lead_pause_ms ?? 0,
-    speech_speed: revision?.speech_speed ?? 1,
-    beacon: revision?.beacon ?? defaultBeacon(),
-  }
-}
 
 function seconds(ms: number): string { return (ms / 1000).toString() }
 function pauseMs(value: string): number { return Math.round(Number(value) * 1000) }
@@ -34,8 +23,8 @@ function validDraft(value: Draft): boolean {
     (!value.beacon.enabled || !!value.beacon.asset_id)
 }
 
-export function ProjectWorkshop({ projects, voices, notify, refresh }: {
-  projects: Project[]; voices: Voice[]; notify: Notify; refresh: (quiet?: boolean) => Promise<void>
+export function ProjectWorkshop({ projects, voices, notify, refresh, editorialMode = false }: {
+  projects: Project[]; voices: Voice[]; notify: Notify; refresh: (quiet?: boolean) => Promise<void>; editorialMode?: boolean
 }) {
   const [selectedId, setSelectedId] = useState('')
   const [creating, setCreating] = useState(false)
@@ -50,6 +39,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
   const [assemblies, setAssemblies] = useState<Assembly[]>([])
   const [takes, setTakes] = useState<Record<string, Take[]>>({})
   const [audition, setAudition] = useState<Assembly | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [legacy, setLegacy] = useState(false)
   const [markdown, setMarkdown] = useState('')
   const [meta, setMeta] = useState({ title: '', voice_id: '', language: 'en' as Language, project_seed: 20260805 })
@@ -75,7 +65,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
     const [next, nextRevisions, nextRuns, nextAssemblies] = await Promise.all([
       api.project(id), api.projectRevisions(id), api.projectRuns(id), api.projectAssemblies(id),
     ])
-    const nextTakes = await Promise.all(next.segments.map(async (segment) => [segment.id, await api.projectTakes(id, segment.id)] as const))
+    const nextTakes = editorialMode ? [] : await Promise.all(next.segments.map(async (segment) => [segment.id, await api.projectTakes(id, segment.id)] as const))
     if (token !== sequence.current || current.current !== id) return
     if (loadedRevision.current !== (next.revision?.id ?? null)) setAudition(null)
     loadedRevision.current = next.revision?.id ?? null
@@ -86,7 +76,7 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
     setTakes(Object.fromEntries(nextTakes))
     if (force || !dirtyRef.current) hydrate(next)
     else if (savedRef.current !== next.revision?.id) setStale(true)
-  }, [hydrate])
+  }, [hydrate, editorialMode])
 
   useEffect(() => {
     if (!selectedId && !creating && projects[0]) setSelectedId(projects[0].id)
@@ -98,11 +88,13 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
     if (!selectedId || creating) return
     current.current = selectedId
     setAudition(null)
+    setLoadError(null)
     dirtyRef.current = false
-    void load(selectedId, true).catch((error) => notifyRef.current('error', (error as Error).message))
+    void load(selectedId, true).catch((error) => { if (current.current === selectedId) { setLoadError((error as Error).message); notifyRef.current('error', (error as Error).message) } })
+    if (editorialMode) return () => { ++sequence.current }
     const timer = window.setInterval(() => void load(selectedId).catch(() => undefined), 3000)
     return () => { window.clearInterval(timer); ++sequence.current }
-  }, [selectedId, creating, load])
+  }, [selectedId, creating, load, editorialMode])
 
   const edit = (patch: Partial<Draft>) => {
     setDraft((value) => ({ ...value, ...patch }))
@@ -203,6 +195,20 @@ export function ProjectWorkshop({ projects, voices, notify, refresh }: {
   const savedBeacon = detail?.revision?.beacon
   const beaconSrc = savedBeacon?.asset_id && detail ? `/api/projects/${detail.id}/beacon` : undefined
 
+  if (editorialMode) return <div className="projects-layout workshop-layout">
+    <aside className="panel project-list"><div className="panel-heading compact"><div><span className="kicker">ESCUCHA E HISTORIAL</span><h2>Otros trabajos</h2></div></div>
+      {projects.length === 0 && <p>No hay otros trabajos guardados.</p>}
+      {projects.map((project) => <button type="button" key={project.id} className={selectedId === project.id ? 'active' : ''} onClick={() => switchProject(project.id)}><span><strong>{project.title}</strong><small>{project.language.toUpperCase()}</small></span></button>)}
+    </aside>
+    <div className="project-workspace">{!detail || detail.id !== selectedId ? <section className="panel project-editor" role="status">{loadError ? <><p role="alert">No se pudo abrir este trabajo: {loadError}</p><button className="soft-button" type="button" onClick={() => { setLoadError(null); void load(selectedId, true).catch((error) => setLoadError((error as Error).message)) }}>Reintentar</button></> : projects.length ? 'Cargando trabajo…' : 'Los trabajos anteriores aparecerán aquí.'}</section> : <>
+      <section className="panel project-editor"><div className="panel-heading"><div><span className="kicker">REVISIÓN {detail.revision?.number ?? '—'}</span><h2>{detail.title}</h2></div><button type="button" className="soft-button" onClick={() => void load(detail.id, true).catch((error) => notify('error', (error as Error).message))}><RefreshCw size={14} /> Actualizar</button></div><p className="editorial-copy">Escuchá las tomas y consultá las revisiones guardadas de este trabajo.</p>
+        <details className="workshop-history"><summary><History size={15} /> Historial · {revisions.length}</summary><div>{revisions.slice().reverse().map((row) => <div key={row.id}><span>#{row.number} · {new Date(row.created_at).toLocaleString()} · {row.blocks.length} bloques</span></div>)}</div></details>
+      </section>
+      <section className="score-script editorial-project-script" aria-label="Guion guardado">{detail.segments.map((segment, index) => <article className="score-script-block" key={segment.id}><div className="score-script-number">{index + 1}</div><div><p className="score-spoken-text">{segment.text}</p><span className="score-pause">Pausa después · {seconds(segment.pause_after_ms)} s</span><EditorialTakes key={`${detail.id}-${detail.revision?.id}-${segment.id}`} projectId={detail.id} segmentId={segment.id} /></div></article>)}</section>
+      {assemblies.length > 0 && <section className="panel project-editor"><h2>Audios guardados</h2><p className="editorial-copy">Cada audio corresponde a su revisión guardada.</p>{assemblies.map((assembly) => <div key={assembly.id}><p>{assembly.kind === 'preview' ? 'Preview' : 'Final guardado'} · revisión {revisions.find((row) => row.id === assembly.revision_id)?.number ?? assembly.revision_id} {assembly.segment_id ? '· bloque' : '· completo'}</p><audio controls preload="none" src={`/api/assemblies/${assembly.id}/audio`} /></div>)}</section>}
+    </>}</div>
+  </div>
+
   return <div className="projects-layout workshop-layout">
     <aside className="panel project-list"><div className="panel-heading compact"><div><span className="kicker">LONG FORM</span><h2>Proyectos</h2></div><button type="button" className="icon-button" title="Nuevo proyecto" disabled={busy} onClick={startCreate}><Plus size={17} /></button></div>
       {projects.map((project) => <button type="button" key={project.id} disabled={busy} className={selectedId === project.id && !creating ? 'active' : ''} onClick={() => switchProject(project.id)}><span><strong>{project.title}</strong><small>{project.language.toUpperCase()} · {project.status}{project.handoff ? ` · Marcada #${project.handoff.revision_number}` : ''}</small></span></button>)}
@@ -252,4 +258,19 @@ function BlockEditor({ blocks, speechSpeed, patchBlock, moveBlock, edit }: {
   moveBlock: (index: number, step: number) => void; edit: (patch: Partial<Draft>) => void
 }) {
   return <div className="workshop-blocks"><div className="workshop-block-heading"><strong>Partitura</strong><span>{blocks.length} {blocks.length === 1 ? 'bloque' : 'bloques'}</span></div>{blocks.map((block, index) => <div className="workshop-block" key={block.id}><span className="score-index">{String(index + 1).padStart(2, '0')}</span><label className="workshop-block-text"><span>Texto</span><textarea rows={2} value={block.text} onChange={(e) => patchBlock(block.id, { text: e.target.value })} /></label><label><span>Pausa después · s</span><input type="number" min="0" step="0.01" value={seconds(block.pause_after_ms)} onChange={(e) => patchBlock(block.id, { pause_after_ms: pauseMs(e.target.value) })} /></label><label><span>Velocidad</span><select value={block.speed === null ? 'inherit' : 'custom'} onChange={(e) => patchBlock(block.id, { speed: e.target.value === 'inherit' ? null : speechSpeed })}><option value="inherit">General ×{speechSpeed}</option><option value="custom">Propia</option></select>{block.speed !== null && <input aria-label={`Velocidad bloque ${index + 1}`} type="number" min="0.5" max="2" step="0.01" value={block.speed} onChange={(e) => patchBlock(block.id, { speed: Number(e.target.value) })} />}</label><div className="workshop-block-tools"><button type="button" className="icon-button" title="Subir bloque" aria-label="Subir bloque" disabled={index === 0} onClick={() => moveBlock(index, -1)}><ArrowUp size={15} /></button><button type="button" className="icon-button" title="Bajar bloque" aria-label="Bajar bloque" disabled={index === blocks.length - 1} onClick={() => moveBlock(index, 1)}><ArrowDown size={15} /></button><button type="button" className="icon-button danger" title="Eliminar bloque" aria-label="Eliminar bloque" disabled={blocks.length === 1} onClick={() => edit({ blocks: blocks.filter((row) => row.id !== block.id) })}><Trash2 size={15} /></button></div></div>)}<button type="button" className="add-row" onClick={() => edit({ blocks: [...blocks, newBlock()] })}><Plus size={15} /> Agregar bloque</button></div>
+}
+
+function EditorialTakes({ projectId, segmentId }: { projectId: string; segmentId: string }) {
+  const [takes, setTakes] = useState<Take[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const load = () => {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    void api.projectTakes(projectId, segmentId).then((rows) => { if (alive.current) setTakes(rows) }).catch((reason) => { if (alive.current) setError((reason as Error).message) }).finally(() => { if (alive.current) setLoading(false) })
+  }
+  return <details className="editorial-takes" onToggle={(event) => { if (event.currentTarget.open && takes === null && !error) load() }}><summary>Tomas guardadas{takes ? ` · ${takes.length}` : ''}</summary>{loading && <p role="status">Cargando tomas…</p>}{error && <div role="alert"><p>No se pudieron cargar las tomas: {error}</p><button className="soft-button" type="button" onClick={load}>Reintentar</button></div>}{takes?.length === 0 && <p>No hay tomas guardadas para este bloque.</p>}{takes?.map((take) => <div key={take.id}><p>Toma {take.attempt} {take.selected ? '· seleccionada' : ''} · {take.status === 'pass' ? 'validación automática' : 'revisión pendiente'}</p><audio controls preload="none" src={`/api/takes/${take.id}/audio`} /><a className="download-button" href={`/api/takes/${take.id}/download?raw=true`} download><Download size={14} /> Descargar original</a></div>)}</details>
 }

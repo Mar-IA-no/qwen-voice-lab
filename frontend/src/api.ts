@@ -1,4 +1,8 @@
-import type { ArchiveAsset, Assembly, AuthStatus, BeaconSettings, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, SamplingSettings, Segment, SourceRevision, Take, Voice, WorkshopBlock } from './types'
+import type { ArchiveAsset, Assembly, AuthStatus, BeaconSettings, Capabilities, Comparison, Job, Language, Project, ProjectDetail, ProjectRun, SamplingSettings, Segment, SourceRevision, Take, Voice, WorkshopBlock, ScoreWorkspaceCatalog, ScoreWorkspaceDetail, ScoreDraft, ScoreRevisionSummary, ScorePreview } from './types'
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) { super(message); this.name = 'ApiError' }
+}
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -10,7 +14,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     } catch {
       // The status line is sufficient when a response is not JSON.
     }
-    throw new Error(message)
+    throw new ApiError(response.status, message)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -23,6 +27,12 @@ export const api = {
   capabilities: () => request<Capabilities>('/api/capabilities'),
   voices: () => request<Voice[]>('/api/voices'),
   jobs: () => request<Job[]>('/api/jobs?limit=100'),
+  scoreWorkspaces: () => request<ScoreWorkspaceCatalog>('/api/score-workspaces'),
+  scoreWorkspace: (id: string) => request<ScoreWorkspaceDetail>(`/api/score-workspaces/${encodeURIComponent(id)}`),
+  scoreRevisions: (id: string) => request<ScoreRevisionSummary[]>(`/api/score-workspaces/${encodeURIComponent(id)}/revisions`),
+  saveScoreRevision: (id: string, payload: ScoreDraft & { expected_revision_id: string }) => request<ScoreWorkspaceDetail>(`/api/score-workspaces/${encodeURIComponent(id)}/revisions`, jsonPost(payload)),
+  restoreScoreRevision: (id: string, revision_id: string, expected_revision_id: string) => request<ScoreWorkspaceDetail>(`/api/score-workspaces/${encodeURIComponent(id)}/restore`, jsonPost({ revision_id, expected_revision_id })),
+  previewScore: (id: string, revision_id: string, source_keys?: string[]) => request<ScorePreview>(`/api/score-workspaces/${encodeURIComponent(id)}/preview`, jsonPost({ revision_id, ...(source_keys ? { source_keys } : {}) })),
   projects: () => request<Project[]>('/api/projects'),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
   markHandoff: (id: string, expected_revision_id: string) => request<ProjectDetail>(`/api/projects/${id}/handoff`, jsonPost({ expected_revision_id })),

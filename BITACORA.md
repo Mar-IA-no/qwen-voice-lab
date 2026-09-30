@@ -82,3 +82,23 @@ Post-merge acceptance hardening closed the remaining operator-facing gaps. Conte
 Take records now preserve the exact trim threshold and padding, and authenticated raw or trimmed WAVs have direct attachment endpoints. The Projects dashboard exposes every persisted sampling control, transcript, WER/CER, block coverage, alignment, identity windows, hashes, trim provenance, playback and direct take downloads. The private acceptance runner records six-language TTS/ASR/alignment/identity evidence, asserts the Italian question, following block and final words, and leaves perceptual listening explicitly to a human.
 
 The public gate completed with 93 tests passing and two privileged systemd tests skipped in the ordinary suite; those two cleanup tests also passed when run explicitly. Ruff, Vitest, TypeScript, the packaged frontend byte comparison, both dependency locks, package build and npm audit completed successfully. The served installation was restarted and its unauthenticated private-network UI, static bundle, API, validator configuration and standby worker state responded normally without loading a model.
+
+## 2026-09-30 — Listening workspace for existing locutions
+
+Added a configured, pinned collection workspace with one principal script,
+explicit variants and separate access to earlier projects. Composition versions
+live beside the original catalog and use transactional expected-revision checks;
+restoring adds a version. Existing recordings, takes and source revisions are
+preserved. Editing covers block order and initial/post-block seconds with
+undo/redo, history, conflict recovery and draft export.
+
+Full, selected and single-block listening performs a bounded CPU montage of
+existing speech. Its WAV and manifest share an exact sample timeline and
+authenticated publication; Beacon remains a separately pinned track. Editorial
+mode hides generation actions and does not load TTS or validators for listening.
+Browser testing identified initial Beacon buffering and missing HTTP range
+support for seeking; both received focused corrections. Independent review
+reproduced delayed playback and restoration races; their focused corrections
+were checked before integration. Targeted backend and frontend checks, TypeScript,
+Ruff and desktop/mobile browser scenarios passed. Human usability and
+perceptual acceptance remain explicit listening tasks.

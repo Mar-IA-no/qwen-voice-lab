@@ -136,6 +136,7 @@ export interface ProjectSegment {
   pause_after_ms: number
   speed?: number | null
   selected_take_id?: string | null
+  provenance?: Record<string, unknown>
 }
 
 export interface WorkshopBlock {
@@ -144,6 +145,7 @@ export interface WorkshopBlock {
   pause_after_ms: number
   speed: number | null
   selected_take_id?: string | null
+  provenance?: Record<string, unknown>
 }
 
 export interface BeaconSettings {
@@ -263,4 +265,116 @@ export interface Assembly {
   audit_status: 'pending' | 'pass' | 'review' | 'overridden' | 'unavailable'
   audit: Record<string, unknown>
   created_at: string
+}
+
+export interface ScoreWorkspaceSummary {
+  id: string
+  title: string
+  is_default: boolean
+  status: 'ready' | 'unavailable'
+  main_block_count: number
+  variant_block_count: number
+  source_project_ids?: string[]
+}
+
+export interface ScoreWorkspaceCatalog {
+  workspaces: ScoreWorkspaceSummary[]
+  editorial_mode: boolean
+  default_workspace_id: string | null
+}
+
+export interface ScoreSource {
+  project_id: string
+  revision_id: string
+  revision_sha256: string
+  revision_snapshot_sha256: string
+  segment_id: string
+  take_id: string
+  text_sha256: string
+  audio_sha256: string
+  take_revision_id: string | null
+  validation_status: string | null
+  selection_override_reason: string | null
+  provenance: Record<string, unknown>
+  take_provenance: Record<string, unknown>
+}
+
+export interface ScoreWorkspaceBlock {
+  source_key: string
+  role: 'main' | 'variant'
+  stage_id: string
+  stage_title: string
+  order: number
+  text: string
+  pause_after_ms: number
+  speech_speed: number
+  baseline_speed: number | null
+  duration_seconds: number | null
+  status: 'ready' | 'unavailable'
+  unavailable_reason: string | null
+  source: ScoreSource
+  response_marker: string | null
+}
+
+export interface ScoreWorkspaceDetail {
+  workspace: ScoreWorkspaceSummary
+  catalog_sha256: string
+  unavailable_reason?: string | null
+  catalog_blocks?: ScoreWorkspaceBlock[]
+  revision: {
+    id: string
+    number: number
+    created_at?: string | null
+    kind?: string
+    includes_variants?: boolean
+    restored_from_revision_id?: string | null
+    lead_in_ms: number
+    blocks: ScoreWorkspaceBlock[]
+    beacon: Record<string, unknown> | null
+  } | null
+}
+
+export interface ScoreDraft {
+  lead_in_ms: number
+  blocks: { source_key: string; pause_after_ms: number }[]
+}
+
+export interface ScoreRevisionSummary {
+  id: string
+  number: number
+  created_at: string | null
+  kind?: string
+  includes_variants?: boolean
+  restored_from_revision_id: string | null
+  block_count: number
+  lead_in_ms: number
+}
+
+export interface ScorePreview {
+  id: string
+  workspace_id: string
+  revision_id: string
+  source_keys: string[]
+  selection_mode: 'full' | 'selection'
+  catalog_sha256: string
+  audio_url: string
+  download_url: string
+  manifest_url: string
+  duration_seconds: number
+  sample_rate: number
+  total_samples: number
+  timeline: {
+    source_key: string
+    start_sample: number
+    voice_end_sample: number
+    end_sample: number
+    pause_samples: number
+  }[]
+  beacon: {
+    enabled: boolean
+    offset_seconds: number
+    volume: number
+    status: 'ready' | 'unavailable'
+    audio_url: string
+  } | null
 }

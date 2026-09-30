@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     max_text_chars: int = Field(default=12_000, ge=100, le=100_000)
     max_segments: int = Field(default=64, ge=1, le=256)
     max_comparison_voices: int = Field(default=5, ge=2, le=12)
+    score_preview_max_sources: int = Field(default=256, ge=1, le=256)
+    score_preview_max_duration_seconds: int = Field(default=3600, ge=1, le=86_400)
+    score_request_max_bytes: int = Field(default=256 * 1024, ge=1024, le=256 * 1024)
+    score_preview_disk_headroom_bytes: int = Field(default=16 * 1024 * 1024, ge=1024 * 1024)
 
     @model_validator(mode="after")
     def resolve_local_paths(self) -> Settings:
